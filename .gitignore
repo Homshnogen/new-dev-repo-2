@@ -1,0 +1,5 @@
+/passes/*
+!/passes/.gitkeep
+/test-output/*
+!/test-output/.gitkeep
+!.gitignore
