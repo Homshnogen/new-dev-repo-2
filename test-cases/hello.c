@@ -1,5 +1,7 @@
 #include <stdio.h>
 
+//void logBranchDecision(int a) {};
+
 int what(int a, int b) {
     int c = a^b;
     int d = a&b;
