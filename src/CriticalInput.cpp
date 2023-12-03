@@ -38,18 +38,23 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
                     dbgs() << "Alloca Variable: " << ddi->getVariable()->getName() << ", Line " << ddi->getVariable()->getLine() << '\n';
                 }
             } else if (CallInst *ci = dyn_cast<CallInst>(&I)) {
-                if (Function *callf = ci->getCalledFunction()) {
-                    if (callf->getName().equals("logBranchDecision")) {
+                if (ci->getCalledFunction()) {
+                    if (ci->getCalledFunction()->getName().equals("logBranchDecision")) {
                         dbgs() << "LogBD call: " << *ci << '\n';
                         if (Instruction *a = dyn_cast<Instruction>(ci->getNextNode())) {
                             dbgs() << "Next (flagged) instruction: " << *a << '\n';
                         }
+                    } else {
+                        dbgs() << "called non-LogBD function: " << ci->getCalledFunction()->getName() << '\n';
+                        for (auto &op : ci->args()) { // iterate over function args
+                            errs() << "    Op: " << *op.get() << "\n";
+                        }
                     }
                 } else {
                     // called function pointer
-                    dbgs() << "Called function pointer with operands: \n";
-                    for (auto op = I.op_begin(); op != I.op_end(); op++) {
-                        errs() << "    Op: " << *op->get() << "\n";
+                    dbgs() << "Called function pointer: " << *ci->getCalledOperand() << '\n';
+                    for (auto &op : ci->args()) { // iterate over function args
+                        errs() << "    Op: " << *op.get() << "\n";
                     }
                 }
             }
