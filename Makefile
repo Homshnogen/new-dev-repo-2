@@ -43,6 +43,10 @@ run-mcf: test-output/mcf clean-mcf-output
 test-practice: passes/PracticePass.so test-cases/test.c
 	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/PracticePass.so" -S test-cases/test.c -o test-output/test.ll
 
+test-logbd: passes/BranchPointerProfilerPass.so test-cases/test.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/test.c -o test-output/test.ll
+	clang test-output/test.ll -o test-output/test
+
 test-mcf: passes/PracticePass.so test-cases/mcf.c
 	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/PracticePass.so" -S test-cases/mcf.c -o test-output/mcf.ll
 

@@ -1,12 +1,13 @@
 #include <stdio.h>
 
+
 struct abg {
     int xx, yy;
 };
 
 struct {
     int aa, bb;
-} *j;
+} j;
 
 struct cya {
     int ss, tt;
@@ -52,7 +53,7 @@ void morbs(int a) {
 
 int main() {
     int *it;
-    (*j).bb = 6;
+    j.bb = 6;
     printf("Helo %d'z nuts", carat(41));
     printf("Helo %d'z nuts", carat(carat(41)));
 
@@ -63,9 +64,9 @@ int main() {
 
 
     int cal[8][10];
-    it = &cal[5][j->bb];
+    it = &cal[5][j.bb];
     scanf("%d", it);
-    int (*fptr)(int) = (cal[5][j->bb]%2 == 1) ? &carat : &flor;
+    int (*fptr)(int) = (cal[5][j.bb]%2 == 1) ? &carat : &flor;
     printf("Helo %d'z nuts", (*fptr)(10));
     char *soot = "Helo %d'z nuts";
     char gum = "Helo %d'z nuts"[11];

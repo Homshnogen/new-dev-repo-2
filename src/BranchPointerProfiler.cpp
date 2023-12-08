@@ -15,13 +15,26 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         // Initialization for logging function
         // logBranchDecision takes branch ID and logs it
         FunctionCallee logBranchFunc = M.getOrInsertFunction(
-          "logBranchDecision",
-          Type::getVoidTy(M.getContext()),  // return type
-          Type::getInt32Ty(M.getContext())  // branch ID
+          "printf",
+          FunctionType::get(IntegerType::get(M.getContext(), 32), PointerType::getUnqual(IntegerType::get(M.getContext(), 8)), true) //(Type *Result, ArrayRef< Type * > Params, bool isVarArg)
         );
+        Constant *branchFString = ConstantDataArray::getString(M.getContext(), StringRef("branch : %d\n"));
+        ConstantInt *constIntZero = ConstantInt::getSigned(IntegerType::get(M.getContext(), 32), 0);
+        
+        GlobalVariable* branchGlobalString = new GlobalVariable(M, 
+        branchFString->getType(),
+        true,
+        GlobalValue::PrivateLinkage,
+        branchFString, // has initializer, specified below
+        ".log.str.branch"); 
+        branchGlobalString->setAlignment(Align(1));
+        branchGlobalString->setUnnamedAddr(GlobalVariable::UnnamedAddr::Global);
+        errs() << "trying thing\n";
+        Constant *branchGEPExpr = ConstantExpr::getInBoundsGetElementPtr(branchFString->getType() , branchGlobalString, ArrayRef<Constant *>({constIntZero, constIntZero}));
+        errs() << *branchGEPExpr << "\n";
         // Assign unique ID to each branch
         static int branchCounter = 0;
-        
+
         for (auto &F : M) {
           for (auto &BB : F) {
             for (auto &I : BB) {
@@ -33,8 +46,9 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                   
                   // Instrument the branch
                   IRBuilder<> builder(branchInst);
+                  //static GetElementPtrConstantExpr * 	Create (Type *SrcElementTy, Constant *C, ArrayRef< Constant * > IdxList, Type *DestTy, unsigned Flags)
                   Value *branchIDValue = ConstantInt::get(Type::getInt32Ty(F.getContext()), currentBranchID);
-                  builder.CreateCall(logBranchFunc, branchIDValue);
+                  builder.CreateCall(logBranchFunc, {branchGEPExpr, branchIDValue});
                         
                   // Store metadata for later use
                   if (DebugLoc DL = branchInst->getDebugLoc()) {
