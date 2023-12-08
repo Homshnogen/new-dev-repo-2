@@ -17,7 +17,7 @@ Copyright (c) 2003-2005 Loebel.
 Copyright (c) 2006-2010 LBW.
 **************************************************************************/
 // reassembled in one file for CSC 412/512 project
-#define PRId64 "ld" // does not get defined by headers/inttypes, for some reason
+#define PRId64 "ld" // does not get defined by headers/inttypes because windows version got installed by SPEC
 
 #include "mcf/mcf.c"
 #include "mcf/implicit.c"
