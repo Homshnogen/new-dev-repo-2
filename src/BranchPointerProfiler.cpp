@@ -14,7 +14,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
     PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
         // Initialization for logging function
         // logBranchDecision takes branch ID and logs it
-        FunctionCallee logBranchFunc = M.getOrInsertFunction(
+        FunctionCallee printfFunc = M.getOrInsertFunction(
           "printf",
           FunctionType::get(IntegerType::get(M.getContext(), 32), PointerType::getUnqual(IntegerType::get(M.getContext(), 8)), true) //(Type *Result, ArrayRef< Type * > Params, bool isVarArg)
         );
@@ -48,7 +48,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                   IRBuilder<> builder(branchInst);
                   //static GetElementPtrConstantExpr * 	Create (Type *SrcElementTy, Constant *C, ArrayRef< Constant * > IdxList, Type *DestTy, unsigned Flags)
                   Value *branchIDValue = ConstantInt::get(Type::getInt32Ty(F.getContext()), currentBranchID);
-                  builder.CreateCall(logBranchFunc, {branchGEPExpr, branchIDValue});
+                  builder.CreateCall(printfFunc, {branchGEPExpr, branchIDValue});
                         
                   // Store metadata for later use
                   if (DebugLoc DL = branchInst->getDebugLoc()) {
@@ -57,6 +57,13 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                     // Store 'file' and 'line' for later use
                   }             
                 }
+              } else if (CallInst *ci = dyn_cast<CallInst>(&I)){
+                  if (Function *cfn = ci->getCalledFunction()) {
+
+                  } else {
+                      // called function pointer, ci->getCalledOperand() 
+                      // get reference maybe? dyn_cast<LoadInst>(ci->getCalledOperand())->getPointerOperand()
+                  }
               }
             }
           }

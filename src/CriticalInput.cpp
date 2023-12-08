@@ -263,7 +263,7 @@ std::unordered_set<InstructionDataType> &InstructionBacktrackValue(Value *val, s
                     if (StoreInst *si = dyn_cast<StoreInst>(lastUser)) {
                         Instruction *prev = static_cast<Instruction*>(si);
 
-                    } else if (CallInst *ci = dyn_cast<StoreInst>(lastUser)){
+                    } else if (CallInst *ci = dyn_cast<CallInst>(lastUser)){
                         if (Function *cfn = ci->getCalledFunction()) {
                             StringRef fname = cfn->getName();
                             if (fname.equals("scanf") || fname.equals("__isoc99_scanf")) {

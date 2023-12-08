@@ -308,9 +308,11 @@ std::string findVariableName2 (Value *val) {
             } else {
                 // var has no name; global const string
                 //rets << *gvar->getInitializer() << " string or ";
-                if (ConstantDataSequential *gstr = dyn_cast<ConstantDataSequential>(gvar->getInitializer())) { // is string for sure
-                    if (gstr->isString()) {
-                        rets << '"' << gstr->getAsString() << '"';
+                if (gvar->hasInitializer()) {
+                    if (ConstantDataSequential *gstr = dyn_cast<ConstantDataSequential>(gvar->getInitializer())) { // is string for sure
+                        if (gstr->isString()) {
+                            rets << '"' << gstr->getAsString() << '"';
+                        }
                     }
                 }
                 /*
@@ -366,7 +368,7 @@ std::string findVariableName2 (Value *val) {
         if (val->getName().equals("")) {
             rets << "unnamed(" << *val->getType() << ")";
         } else {
-            rets << "unnamed(" << val->getName() << ")";
+            rets << "unnamed(" << *val << ")";
         }
         /*
         errs() << "unnamed: " << val->getName()  << '\n';
@@ -462,6 +464,40 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                             raw_string_ostream temps(temp);
                             temps << *alloca;
                             varUnnamed.insert(temp);
+                        }
+                    } else if (LoadInst *loadI = dyn_cast<LoadInst>(&I)) {
+                        std::string loadstr = findVariableName3(loadI);
+                        errs() << "VarName load : " << loadstr << '\n';
+                        if (loadstr.find("unnamed") != std::string::npos) {
+                            std::string temp;
+                            raw_string_ostream temps(temp);
+                            temps << "load:" << loadstr << *loadI;
+                            varUnnamed.insert(temp);
+                        }
+                        Value *addr = loadI->getPointerOperand();
+                        if (!dyn_cast<AllocaInst>(addr) ) {
+                            User *lastUser;
+                            if (dyn_cast<GlobalVariable>(addr)) {
+                                errs() << "Global load : " << *addr << '\n';
+                            }
+                            if (addr->getNumUses() < 8) {
+                                errs() << "Users of load : ";
+                                for (Use &use : addr->uses()) {
+                                    User *user = use.getUser();
+                                    if (auto *opc = dyn_cast<Instruction>(user)) {
+                                        errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
+                                    } else if (auto *opc = dyn_cast<ConstantExpr>(user)) {
+                                        errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
+                                    }
+                                    lastUser = user;
+                                }
+                                errs() << '\n';
+                                errs() << "small load addr : " << *addr << '\n';
+                            } else {
+                                errs() << "load addr : " << *addr << '\n';
+                            }
+                            //if (static_cast<Value*>(lastUser) != addr) {}
+                            //errs() << "last users of load : " << *lastUser << '\n';
                         }
                     }
                 }
