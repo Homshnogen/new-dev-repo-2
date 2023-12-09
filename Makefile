@@ -4,6 +4,7 @@ SRC_DIR = src
 PASSES_DIR = passes
 TEST_CASES_DIR = test-cases
 TEST_OUTPUT_DIR = test-output
+PROFILING_DIR = profiling
 
 SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
 PASS_SO = $(patsubst $(SRC_DIR)/%.cpp,$(PASSES_DIR)/%.so,$(SOURCES))
@@ -25,8 +26,21 @@ $(TEST_OUTPUT_DIR)/%.ll: $(TEST_CASES_DIR)/%.c $(PASSES_DIR)/$(DEFAULT_PASS).so
 $(TEST_OUTPUT_DIR)/%: $(TEST_OUTPUT_DIR)/%.ll
 	clang $< -o $@
 
+PROFILING_DIR = profiling
+VALGRIND_FLAGS = --tool=callgrind
+
+# Profiling with Valgrind
+profile: $(TEST_CASES_EXE)
+	mkdir -p $(PROFILING_DIR)
+	$(foreach exe,$(TEST_CASES_EXE),valgrind $(VALGRIND_FLAGS) --callgrind-out-file=$(PROFILING_DIR)/$(notdir $(exe)).callgrind ./$(exe);)
+
+# Analyze profiling data
+analyze:
+	./tools/analyze_profiling_data.sh $(PROFILING_DIR)
+
+
 clean:
 	rm -f $(PASSES_DIR)/*.so
 	rm -f $(TEST_OUTPUT_DIR)/*.ll
 	rm -f $(TEST_OUTPUT_DIR)/*
-
+	rm -rf $(PROFILING_DIR)
