@@ -67,7 +67,7 @@ int main() {
     it = &cal[5][j.bb];
     scanf("%d", it);
     int (*fptr)(int) = (cal[5][j.bb]%2 == 1) ? &carat : &flor;
-    printf("Helo %d'z nuts", (*fptr)(10));
+    printf("Helo %d'z nuts %p\n", (*fptr)(10), fptr);
     char *soot = "Helo %d'z nuts";
     char gum = "Helo %d'z nuts"[11];
     gum = soot[12];

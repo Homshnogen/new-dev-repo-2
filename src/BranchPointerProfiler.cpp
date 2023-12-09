@@ -74,7 +74,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         
         // Setup for function pointer logging
         // Create format string for function pointer logging
-        Constant *funcPtrFString = ConstantDataArray::getString(M.getContext(), StringRef("func_ptr: %d\n"));
+        Constant *funcPtrFString = ConstantDataArray::getString(M.getContext(), StringRef("func_ptr: %d %p\n"));
         
         // Create global variable for function pointer format string
         GlobalVariable* funcPtrGlobalString = new GlobalVariable(M, 
@@ -137,6 +137,10 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                         ConstantInt::get(Type::getInt32Ty(F.getContext()), currentFuncPtrID),
                         funcPtrValue
                   };
+                  
+                  // Instrument the function pointer call
+                  IRBuilder<> builder(ci);
+                  builder.CreateCall(printfFunc, args);
                   
                   // Store metadata for later use
                   if (DebugLoc DL = ci->getDebugLoc()) {
