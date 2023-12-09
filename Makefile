@@ -1,55 +1,32 @@
 BUILD_PASS_OPTIONS = -fPIC -fno-exceptions -I/usr/lib/llvm-14/include -std=c++17 -Wl,-rpath-link, -Wl,--gc-sections -Wl,-rpath,"/usr/lib/llvm-14/lib" /usr/lib/llvm-14/lib/libLLVM-14.so -shared
 DEBUG_FLAGS = -g -fno-discard-value-names -O0
+SRC_DIR = src
+PASSES_DIR = passes
+TEST_CASES_DIR = test-cases
+TEST_OUTPUT_DIR = test-output
 
-all: passes/PracticePass.so passes/BranchPointerProfilerPass.so
+SOURCES = $(wildcard $(SRC_DIR)/*.cpp)
+PASS_SO = $(patsubst $(SRC_DIR)/%.cpp,$(PASSES_DIR)/%.so,$(SOURCES))
+TEST_CASES = $(wildcard $(TEST_CASES_DIR)/*.c)
+TEST_CASES_LL = $(patsubst $(TEST_CASES_DIR)/%.c,$(TEST_OUTPUT_DIR)/%.ll,$(TEST_CASES))
+TEST_CASES_EXE = $(patsubst $(TEST_CASES_DIR)/%.c,$(TEST_OUTPUT_DIR)/%,$(TEST_CASES))
 
-passes/PracticePass.so: src/Practice.cpp 
-	clang $(BUILD_PASS_OPTIONS) -o passes/PracticePass.so src/Practice.cpp 
+# Default LLVM pass to be applied
+DEFAULT_PASS = BranchPointerProfiler
 
-passes/BranchPointerProfilerPass.so: src/BranchPointerProfiler.cpp 
-	clang $(BUILD_PASS_OPTIONS) -o passes/BranchPointerProfilerPass.so src/BranchPointerProfiler.cpp 
+all: $(PASS_SO) $(TEST_CASES_LL) $(TEST_CASES_EXE)
 
-test-cases: all test-output/hello.ll test-output/something.ll test-output/mcf.ll test-output/test.ll
+$(PASSES_DIR)/%.so: $(SRC_DIR)/%.cpp
+	clang $(BUILD_PASS_OPTIONS) -o $@ $<
 
-# Specify the pass explicitly in the following targets
-test-output/hello.ll: passes/BranchPointerProfilerPass.so test-cases/hello.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/hello.c -o test-output/hello.ll
+$(TEST_OUTPUT_DIR)/%.ll: $(TEST_CASES_DIR)/%.c $(PASSES_DIR)/$(DEFAULT_PASS).so
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="$(PASSES_DIR)/$(DEFAULT_PASS).so" -S $< -o $@
 
-test-output/something.ll: passes/BranchPointerProfilerPass.so test-cases/something.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/something.c -o test-output/something.ll
+$(TEST_OUTPUT_DIR)/%: $(TEST_OUTPUT_DIR)/%.ll
+	clang $< -o $@
 
-test-output/mcf.ll: passes/BranchPointerProfilerPass.so test-cases/mcf.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/mcf.c -o test-output/mcf.ll
-
-test-output/test.ll: passes/BranchPointerProfilerPass.so test-cases/test.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/test.c -o test-output/test.ll
-
-clean-test-cases: clean-mcf-output
-	rm -fv test-output/*
-
-test-output/mcf:
-	clang test-cases/mcf.c -o test-output/mcf
-
-run-mcf: test-output/mcf clean-mcf-output
-	mkdir test-output/mcf-output
-	@cd test-output/mcf-output; ../mcf ../../test-cases/mcf.in
-
-test-practice: passes/PracticePass.so test-cases/test.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/PracticePass.so" -S test-cases/test.c -o test-output/test.ll
-
-test-logbd: passes/BranchPointerProfilerPass.so test-cases/test.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/test.c -o test-output/test.ll
-	clang test-output/test.ll -o test-output/test
-
-test-mcf: passes/PracticePass.so test-cases/mcf.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/PracticePass.so" -S test-cases/mcf.c -o test-output/mcf.ll
-
-test-ci: passes/CriticalInputPass.so test-cases/test.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/test.c -o test-output/test.ll
-
-clean-mcf-output:
-	rm -rfv test-output/mcf-output/*
-
-clean: clean-test-cases
-	rm -fv passes/*
+clean:
+	rm -f $(PASSES_DIR)/*.so
+	rm -f $(TEST_OUTPUT_DIR)/*.ll
+	rm -f $(TEST_OUTPUT_DIR)/*
 

@@ -54,7 +54,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         );
         
         // Setup format string for branch logging
-        Constant *branchFString = ConstantDataArray::getString(M.getContext(), StringRef("branch : %d\n"));
+        Constant *branchFString = ConstantDataArray::getString(M.getContext(), StringRef("branch: %d\n"));
         ConstantInt *constIntZero = ConstantInt::getSigned(IntegerType::get(M.getContext(), 32), 0);
         
         // Create global variable for branch format string 
@@ -74,7 +74,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         
         // Setup for function pointer logging
         // Create format string for function pointer logging
-        Constant *funcPtrFString = ConstantDataArray::getString(M.getContext(), StringRef("func_ptr: %d %p\n"));
+        Constant *funcPtrFString = ConstantDataArray::getString(M.getContext(), StringRef("func_ptr: %d%p\n"));
         
         // Create global variable for function pointer format string
         GlobalVariable* funcPtrGlobalString = new GlobalVariable(M, 
