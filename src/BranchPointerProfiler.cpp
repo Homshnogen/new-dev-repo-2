@@ -66,11 +66,11 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
             ".log.str.branch"); 
         branchGlobalString->setAlignment(Align(1));
         branchGlobalString->setUnnamedAddr(GlobalVariable::UnnamedAddr::Global);
-        errs() << "trying thing\n"; // Debudgging delete
+        // errs() << "trying thing\n"; // Debudgging delete
         
         // Generate a constant expression for getting the address of the branch format string
         Constant *branchGEPExpr = ConstantExpr::getInBoundsGetElementPtr(branchFString->getType() , branchGlobalString, ArrayRef<Constant *>({constIntZero, constIntZero}));
-        errs() << *branchGEPExpr << "\n";
+
         
         // Setup for function pointer logging
         // Create format string for function pointer logging
@@ -88,7 +88,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         
         // Generate a constant expression for getting the address of the function pointer format string
         Constant *funcPtrGEPExpr = ConstantExpr::getInBoundsGetElementPtr(funcPtrFString->getType(), funcPtrGlobalString, ArrayRef<Constant *>({constIntZero, constIntZero}));
-
+        
         // Assign unique ID to each branch and function pointers
         static int branchCounter = 0;
         static int funcPtrCounter = 0; 
@@ -127,20 +127,24 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                 
                   // Increment function pointer counter and log the call
                   int currentFuncPtrID = funcPtrCounter++;
-                  IRBuilder<> builder(ci);
-                  Value *funcPtrIDValue = ConstantInt::get(Type::getInt32Ty(F.getContext()), currentFuncPtrID);
-                  builder.CreateCall(printfFunc, {funcPtrGEPExpr, funcPtrIDValue});
-
+                  
+                  // Get the function pointer value
+                  Value *funcPtrValue = ci->getCalledOperand();
+                  
+                  // Pass 'currentFuncPtrID' and 'funcPtrValue' to printf
+                  Value *args[] = {
+                        funcPtrGEPExpr,
+                        ConstantInt::get(Type::getInt32Ty(F.getContext()), currentFuncPtrID),
+                        funcPtrValue
+                  };
+                  
                   // Store metadata for later use
                   if (DebugLoc DL = ci->getDebugLoc()) {
                     unsigned line = DL.getLine();
                     StringRef file = DL->getFilename();
-            
-                    // Log the file and line information
-                    // Create another format string and global variable for this purpose
-                    // For example, use a format string like "func_ptr_loc: %s:%d\n"
-                    // Then, log the information similar to logging the function pointer ID
-                  } 
+
+                    // Log the file and line information                    
+                  }                 
                 }
               }
             }
