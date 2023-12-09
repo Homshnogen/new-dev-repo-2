@@ -53,6 +53,9 @@ test-mcf: passes/PracticePass.so test-cases/mcf.c
 test-ci: passes/CriticalInputPass.so test-cases/test.c
 	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/test.c -o test-output/test.ll
 
+test-ci-mcf: passes/CriticalInputPass.so test-cases/mcf.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/mcf.c -o test-output/mcf.ll
+
 clean-mcf-output:
 	rm -dfv test-output/mcf-output/* test-output/mcf-output
 

@@ -7,6 +7,9 @@
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/TypeFinder.h"
 //#include "llvm/BinaryFormat/Dwarf.h"
+#include "llvm/IR/IRPrintingPasses.h" // For printing IR
+
+#include "llvm/Analysis/MemorySSA.h"
 
 #include <string>
 #include <regex>
@@ -49,8 +52,8 @@ StructType *typeAsStruct(Type *t) {
     return nullptr; // unreachable
 }
 
-std::string findVariableName (Value *val);
-std::string nameFromGEP (User *gep, int fromLoad) { // for each fromLoad, add a zero before second. For string, remove a zero after
+std::string oldFindVariableName (Value *val);
+std::string oldNameFromGEP (User *gep, int fromLoad) { // for each fromLoad, add a zero before second. For string, remove a zero after
     std::string ret;
     llvm::raw_string_ostream rets(ret);
     return ret;
@@ -85,16 +88,16 @@ std::string nameFromGEP (User *gep, int fromLoad) { // for each fromLoad, add a 
         } else if (second) {
             if (fromLoad > 0) { // for each fromLoad, add a zero before (and as) second; don't change types
                 rets << "(From load second) ";
-                rets << findVariableName(addrArg);
+                rets << oldFindVariableName(addrArg);
                 fromLoad -= 1;
                 i -= 1; // this should be the last thing that happens
             } else if (dyn_cast<ConstantInt>(op.get()) && static_cast<ConstantInt *>(op.get())->isZero()) { // offset is zero
-                rets << findVariableName(addrArg);
+                rets << oldFindVariableName(addrArg);
                 if (type->isPointerTy() && !type->isOpaquePointerTy()) {
                     type = type->getNonOpaquePointerElementType();
                 }
             } else { // offset is non-zero
-                rets << '(' << findVariableName(addrArg) << " + " << findVariableName(op.get()) << ')';
+                rets << '(' << oldFindVariableName(addrArg) << " + " << oldFindVariableName(op.get()) << ')';
                 if (type->isPointerTy() && !type->isOpaquePointerTy()) {
                     type = type->getNonOpaquePointerElementType();
                 }
@@ -123,39 +126,39 @@ std::string nameFromGEP (User *gep, int fromLoad) { // for each fromLoad, add a 
                 }
             } else if (PointerType *ptr = dyn_cast<PointerType>(type)) {
                 if (!ptr->isOpaque()) {
-                    rets << '[' << findVariableName(op.get()) << ']';
+                    rets << '[' << oldFindVariableName(op.get()) << ']';
                     type = ptr->getNonOpaquePointerElementType();
                 }
             } else if (ArrayType *arr = dyn_cast<ArrayType>(type)) {
-                rets << '[' << findVariableName(op.get()) << ']';
+                rets << '[' << oldFindVariableName(op.get()) << ']';
                 type = arr->getElementType();
             } else if (VectorType *arr = dyn_cast<VectorType>(type)) {
-                rets << '[' << findVariableName(op.get()) << ']';
+                rets << '[' << oldFindVariableName(op.get()) << ']';
                 type = arr->getElementType();
             } else { // no type info, or union?
-                rets << '[' << "err " << findVariableName(op.get()) << ']';
+                rets << '[' << "err " << oldFindVariableName(op.get()) << ']';
             }
         }
     }
 
     return ret;
 }
-std::string findVariableName (Value *val, int fromLoad);
-std::string findVariableName (Value *val) {
-    return findVariableName(val, 0);
+std::string oldFindVariableName (Value *val, int fromLoad);
+std::string oldFindVariableName (Value *val) {
+    return oldFindVariableName(val, 0);
 }
-std::string findVariableName (Value *val, int fromLoad) {
+std::string oldFindVariableName (Value *val, int fromLoad) {
     std::string ret;
     llvm::raw_string_ostream rets(ret);
 
     if (Constant *con = dyn_cast<Constant>(val)) {
         if (ConstantExpr *expr = dyn_cast<ConstantExpr>(con)) {
             if (std::strcmp(expr->getOpcodeName(), "getelementptr") == 0) {
-                rets << nameFromGEP(expr, fromLoad);
+                rets << oldNameFromGEP(expr, fromLoad);
             } else {
                 rets << "expr of ";
                 for (Use &next : expr->operands()) {
-                    rets << findVariableName(next.get(), fromLoad) << ", "; // should be constants
+                    rets << oldFindVariableName(next.get(), fromLoad) << ", "; // should be constants
                 }
             }
         } else if (GlobalAlias *alias = dyn_cast<GlobalAlias>(con)) {
@@ -195,7 +198,7 @@ std::string findVariableName (Value *val, int fromLoad) {
         }
         //rets << " is constant!!!";
     } else if (StoreInst *stor = dyn_cast<StoreInst>(val)){ // technically wrong
-        rets << "store " << findVariableName(stor->getValueOperand(), fromLoad) << " in " << findVariableName(stor->getPointerOperand(), fromLoad);
+        rets << "store " << oldFindVariableName(stor->getValueOperand(), fromLoad) << " in " << oldFindVariableName(stor->getPointerOperand(), fromLoad);
     } else if (AllocaInst *alloca = dyn_cast<AllocaInst>(val)){
         for (DbgDeclareInst *ddi : FindDbgDeclareUses(val)) { // should be only one
             //dbgs() << "Debug instruction: " << *ddi << '\n';
@@ -208,29 +211,29 @@ std::string findVariableName (Value *val, int fromLoad) {
         for (Use &ind : gep->indices()) { // should be only one
             if (first) {
                 if (dyn_cast<ConstantInt>(ind.get()) && static_cast<ConstantInt *>(ind.get())->isZero()) {
-                    rets << findVariableName(gep->getPointerOperand(), fromLoad);
+                    rets << oldFindVariableName(gep->getPointerOperand(), fromLoad);
                 } else {
-                    rets << '(' << findVariableName(gep->getPointerOperand(), fromLoad) << " + " << findVariableName(ind.get(), fromLoad) << ')';
+                    rets << '(' << oldFindVariableName(gep->getPointerOperand(), fromLoad) << " + " << oldFindVariableName(ind.get(), fromLoad) << ')';
                 }
                 first = false;
             } else {
-                rets << '[' << findVariableName(ind, fromLoad) << ']';
+                rets << '[' << oldFindVariableName(ind, fromLoad) << ']';
             }
         }
-        rets << " or " << nameFromGEP(gep, fromLoad);
+        rets << " or " << oldNameFromGEP(gep, fromLoad);
         */
-        rets << nameFromGEP(gep, fromLoad);
+        rets << oldNameFromGEP(gep, fromLoad);
     } else if (LoadInst *load = dyn_cast<LoadInst>(val)) {
         for (Use &next : load->operands()) { // should be only one
-            rets << findVariableName(next.get(), fromLoad+1);
+            rets << oldFindVariableName(next.get(), fromLoad+1);
         }
     } else if (CastInst *cast = dyn_cast<CastInst>(val)) { // maybe works????
         for (Use &next : cast->operands()) { // should be only one
-            rets << findVariableName(next.get(), fromLoad-1);
+            rets << oldFindVariableName(next.get(), fromLoad-1);
         }
     } else if (UnaryInstruction *unary = dyn_cast<UnaryInstruction>(val)) { // includes cast, but not alloca and load
         for (Use &next : unary->operands()) { // should be only one
-            rets << findVariableName(next.get(), fromLoad);
+            rets << oldFindVariableName(next.get(), fromLoad);
         }
     }
     return ret;
@@ -239,15 +242,15 @@ bool valIsVariable(Value *val) {
     return (dyn_cast<GlobalVariable>(val)) || (dyn_cast<AllocaInst>(val));
 }
 void sanitizeVariableName(std::string &input);
-std::string findVariableName2 (Value *val);
-std::string nameFromGEP2 (User *gep) { // for each fromLoad, add a zero before second. For string, remove a zero after
+std::string findVariableNameImpl (Value *val);
+std::string nameFromGEP (User *gep) { // for each fromLoad, add a zero before second. For string, remove a zero after
     std::string ret;
     llvm::raw_string_ostream rets(ret);
     for (unsigned i = 0; i < gep->getNumOperands(); i++) {
         Use const &op = gep->getOperandUse(i);
         if (i == 0) {
             // address arg
-            rets << "(&" << findVariableName2(op.get()) << ")&";
+            rets << "(&" << findVariableNameImpl(op.get()) << ")&";
             sanitizeVariableName(ret);
             std::smatch match;
             std::regex find;
@@ -259,7 +262,7 @@ std::string nameFromGEP2 (User *gep) { // for each fromLoad, add a zero before s
             }
         } else if (i == 1) {
             // address arg
-            rets << '[' << findVariableName2(op.get()) << ']';
+            rets << '[' << findVariableNameImpl(op.get()) << ']';
             sanitizeVariableName(ret);
             ret = "(&" + ret +")&";
             sanitizeVariableName(ret);
@@ -272,7 +275,7 @@ std::string nameFromGEP2 (User *gep) { // for each fromLoad, add a zero before s
                 //match.position(1)
             }
         } else {
-            rets << '[' << findVariableName2(op.get()) << ']';
+            rets << '[' << findVariableNameImpl(op.get()) << ']';
             sanitizeVariableName(ret);
         }
     }
@@ -281,7 +284,7 @@ std::string nameFromGEP2 (User *gep) { // for each fromLoad, add a zero before s
 
     return ret;
 }
-std::string findVariableName2 (Value *val) {
+std::string findVariableNameImpl (Value *val) {
     std::string ret;
     llvm::raw_string_ostream rets(ret);
 
@@ -290,11 +293,11 @@ std::string findVariableName2 (Value *val) {
             rets << constint->getSExtValue();
         } else if (ConstantExpr *expr = dyn_cast<ConstantExpr>(con)) {
             if (std::strcmp(expr->getOpcodeName(), "getelementptr") == 0) {
-                rets << nameFromGEP2(expr);
+                rets << nameFromGEP(expr);
             } else {
-                rets << "expr of ";
+                rets << expr->getOpcodeName() << " expr of ";
                 for (Use &next : expr->operands()) {
-                    rets << findVariableName2(next.get()) << ", "; // should be constants
+                    rets << findVariableNameImpl(next.get()) << ", "; // should be constants
                 }
             }
         } else if (GlobalAlias *alias = dyn_cast<GlobalAlias>(con)) {
@@ -305,13 +308,22 @@ std::string findVariableName2 (Value *val) {
             if (DIGlobalVariable *gvinfo = getGlobalVariable(gvar)) {
                 // var has name
                 rets << gvinfo->getName();
+            } else if (gvar->hasExternalLinkage()) { // should be var with external initializer
+                rets << "(extern : " << gvar->getGlobalIdentifier() << ")";
             } else {
                 // var has no name; global const string
                 //rets << *gvar->getInitializer() << " string or ";
                 if (gvar->hasInitializer()) {
                     if (ConstantDataSequential *gstr = dyn_cast<ConstantDataSequential>(gvar->getInitializer())) { // is string for sure
                         if (gstr->isString()) {
-                            rets << '"' << gstr->getAsString() << '"';
+                            std::string temp = gstr->getAsString().str();
+                            for (int i = temp.find('\n'); i != std::string::npos; i = temp.find('\n')) {
+                                temp = temp.substr(0, i) + "\\n" + temp.substr(i+1, std::string::npos);
+                            }
+                            for (int i = temp.find('"'); i != std::string::npos; i = temp.find('"')) {
+                                temp = temp.substr(0, i) + "\\\"" + temp.substr(i+1, std::string::npos);
+                            }
+                            rets << '"' << temp << '"';
                         }
                     }
                 }
@@ -330,7 +342,7 @@ std::string findVariableName2 (Value *val) {
         }
         //rets << " is constant!!!";
     } else if (StoreInst *stor = dyn_cast<StoreInst>(val)){ // technically wrong
-        rets << "store " << findVariableName2(stor->getValueOperand()) << " in " << findVariableName2(stor->getPointerOperand());
+        rets << "store " << findVariableNameImpl(stor->getValueOperand()) << " in " << findVariableNameImpl(stor->getPointerOperand());
     } else if (AllocaInst *alloca = dyn_cast<AllocaInst>(val)){
         if (alloca->getName().equals("retval")) { // retval isn't marked?
             rets << "retval(" << alloca->getFunction()->getName() << ")";
@@ -341,26 +353,26 @@ std::string findVariableName2 (Value *val) {
             rets << varb->getName();
         }
     } else if (GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(val)){
-        rets << nameFromGEP2(gep);
+        rets << nameFromGEP(gep);
     } else if (LoadInst *load = dyn_cast<LoadInst>(val)) {
         for (Use &next : load->operands()) { // should be only one
-            rets << "(*" << findVariableName2(next.get()) << ")*";
+            rets << "(*" << findVariableNameImpl(next.get()) << ")*";
             sanitizeVariableName(ret);
         }
     } else if (CastInst *cast = dyn_cast<CastInst>(val)) { // maybe works????
         for (Use &next : cast->operands()) { // should be only one
-            rets << findVariableName2(next.get());
+            rets << findVariableNameImpl(next.get());
         }
     } else if (CallInst *ci = dyn_cast<CallInst>(val)) {
-        rets << findVariableName2(ci->getCalledOperand());
+        rets << findVariableNameImpl(ci->getCalledOperand());
         rets << '(';
         for (unsigned i = 0; i < ci->arg_size(); i++) {
-            rets << ((i==0) ? "" : ", ") << findVariableName2(ci->getArgOperand(i));
+            rets << ((i==0) ? "" : ", ") << findVariableNameImpl(ci->getArgOperand(i));
         }
         rets << ")";
     } else if (UnaryInstruction *unary = dyn_cast<UnaryInstruction>(val)) { // includes cast, but not alloca and load
         for (Use &next : unary->operands()) { // should be only one
-            rets << findVariableName2(next.get());
+            rets << findVariableNameImpl(next.get());
         }
     }
     if (ret.length() == 0) {
@@ -411,8 +423,8 @@ void trimVariableName(std::string &input) {
         //match.position(1)
     }
 }
-std::string findVariableName3(Value *val) {
-    std::string ret = findVariableName2(val);
+std::string findVariableName(Value *val) {
+    std::string ret = findVariableNameImpl(val);
     trimVariableName(ret);
     return ret;
 }
@@ -431,15 +443,72 @@ void addUsesCodes(std::unordered_set<std::string> &codes, User *U) {
 
 struct PracticePass : public PassInfoMixin<PracticePass> {
     PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
+        //auto &FAM = AM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
         std::unordered_set<std::string> instCodes;
         std::unordered_set<std::string> exprCodes;
         std::unordered_set<std::string> funcNames;
         std::unordered_set<std::string> funcDecls;
         std::unordered_set<std::string> varNames;
         std::unordered_set<std::string> varUnnamed;
+        std::unordered_set<std::string> globalUses;
+        std::unordered_set<std::string> funcArgs;
+        std::unordered_set<std::string> memAccs;
+        std::unordered_set<std::string> memSSAs;
+
+
+        for (auto &G : M.globals()) {
+            std::string gname = findVariableName(&G);
+            if (!G.isConstant()) {
+                for (User *user : G.users()) {
+                    if (MemoryAccess *memacc = dyn_cast<MemoryAccess>(user)) {
+                        std::string temp;
+                        raw_string_ostream temps(temp);
+                        temps << memacc;
+                        memAccs.insert(temp);
+                    }
+                    std::string temp;
+                    raw_string_ostream temps(temp);
+                    if (Instruction *I = dyn_cast<Instruction>(user)) {
+                        temps << "opcode: " << I->getOpcodeName() << ", func: " << I->getFunction()->getName() << ", gname: " << findVariableName(I);
+                    } else if (ConstantExpr * expr = dyn_cast<ConstantExpr>(user)) {
+                        //temps << "gname: " << gname << ", CExpr: " << expr->getOpcodeName();
+                        bool hasUsers = false;
+                        for (auto *expruser : expr->users()) {
+                            hasUsers = true;
+                            if (Instruction *I = dyn_cast<Instruction>(expruser)) {
+                                temps << "opcode: " << I->getOpcodeName() << ", func: " << I->getFunction()->getName() << ", gname: " << findVariableName(I);
+                            } else {
+                                temps << "gname: " << gname << ", unknown2";
+                            }
+                        }
+                        if (!hasUsers) {
+                            temps << "gname: " << *expr << ", unknown3";
+                        }
+                    } else {
+                        temps << "gname: " << gname << ", unknown";
+                    }
+                    globalUses.insert(temp);
+                }
+            }
+        }
+
         //errs() << "Module ?:\n" << M << "\n";
         for (auto &F : M) {
+            //MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+            {
+                
+                std::string temp;
+                raw_string_ostream temps(temp);
+                //MSSA.print(temps);
+                memSSAs.insert(temp);
+            }
+
             funcNames.insert(F.getName().str());
+            std::string argstring;
+            for (Argument &arg : F.args()) {
+                argstring += std::string(arg.hasByRefAttr() ? "( byRef " : "(") + std::string(arg.hasByValAttr() ? " byVal )" : ")");
+            }
+            funcArgs.insert(argstring);
             //errs() << "CSC 512: " << F.getName() << "\n";
             if (F.isDeclaration()) {
                 //funcDecls.insert(F.getName().str());
@@ -457,7 +526,7 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                     instCodes.insert(I.getOpcodeName());
                     addUsesCodes(exprCodes, &I);
                     if (AllocaInst *alloca = dyn_cast<AllocaInst>(&I)) {
-                        std::string varstr = findVariableName3(alloca);
+                        std::string varstr = findVariableName(alloca);
                         varNames.insert(varstr);
                         if (strncmp(varstr.c_str(), "unnamed", 7) == 0) {
                             std::string temp;
@@ -466,8 +535,8 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                             varUnnamed.insert(temp);
                         }
                     } else if (LoadInst *loadI = dyn_cast<LoadInst>(&I)) {
-                        std::string loadstr = findVariableName3(loadI);
-                        errs() << "VarName load : " << loadstr << '\n';
+                        std::string loadstr = findVariableName(loadI);
+                        //errs() << "VarName load : " << loadstr << '\n';
                         if (loadstr.find("unnamed") != std::string::npos) {
                             std::string temp;
                             raw_string_ostream temps(temp);
@@ -478,23 +547,23 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                         if (!dyn_cast<AllocaInst>(addr) ) {
                             User *lastUser;
                             if (dyn_cast<GlobalVariable>(addr)) {
-                                errs() << "Global load : " << *addr << '\n';
+                                //errs() << "Global load : " << *addr << '\n';
                             }
                             if (addr->getNumUses() < 8) {
-                                errs() << "Users of load : ";
+                                //errs() << "Users of load : ";
                                 for (Use &use : addr->uses()) {
                                     User *user = use.getUser();
                                     if (auto *opc = dyn_cast<Instruction>(user)) {
-                                        errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
+                                        //errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
                                     } else if (auto *opc = dyn_cast<ConstantExpr>(user)) {
-                                        errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
+                                        //errs() << " " << opc->getOpcodeName() << "(" << use.getOperandNo() << ")";
                                     }
                                     lastUser = user;
                                 }
-                                errs() << '\n';
-                                errs() << "small load addr : " << *addr << '\n';
+                                //errs() << '\n';
+                                //errs() << "small load addr : " << *addr << '\n';
                             } else {
-                                errs() << "load addr : " << *addr << '\n';
+                                //errs() << "load addr : " << *addr << '\n';
                             }
                             //if (static_cast<Value*>(lastUser) != addr) {}
                             //errs() << "last users of load : " << *lastUser << '\n';
@@ -520,6 +589,18 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
         }
         for (std::string const &str : funcDecls) {
             errs() << "func decls : " << str << '\n';
+        }
+        for (std::string const &str : globalUses) {
+            errs() << "global uses : " << str << '\n';
+        }
+        for (std::string const &str : funcArgs) {
+            errs() << "func args : " << str << '\n';
+        }
+        for (std::string const &str : memAccs) {
+            errs() << "memory access : " << str << '\n';
+        }
+        for (std::string const &str : memSSAs) {
+            errs() << "memoryssa : " << str << '\n';
         }
         return PreservedAnalyses::all();
     };
@@ -551,9 +632,9 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
         */
 
                     /*
-                    errs() << "Instruction: var name " << findVariableName3(&I) << " :: " << I << "\n";
+                    errs() << "Instruction: var name " << findVariableName(&I) << " :: " << I << "\n";
                     for (Use &use : I.operands()) {
-                        errs() << "    Use: var name " << findVariableName3(use.get()) << "\n";
+                        errs() << "    Use: var name " << findVariableName(use.get()) << "\n";
                         
                         errs() << "                Use name or as operand: ";
                         use->printAsOperand(errs());
@@ -562,9 +643,9 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                         if (ConstantExpr *expr = dyn_cast<ConstantExpr>(use.get())) {
                             //errs() << "Base Instruction: " << I << "\n";
                             if (std::strcmp(expr->getOpcodeName(), "getelementptr") == 0) {
-                                errs() << "Base Var name: " << findVariableName2(&I) << "\n";
+                                errs() << "Base Var name: " << findVariableNameImpl(&I) << "\n";
                                 //errs() << "    GEP Expression: " << *expr << "\n";
-                                errs() << "    GEP Expr Var name: " << findVariableName2(expr) << "\n";
+                                errs() << "    GEP Expr Var name: " << findVariableNameImpl(expr) << "\n";
 
                                 errs() << "    GEP type: " << *expr->getType() << "\n";
                                 errs() << "    GEP deref type: " << *expr->getType()->getNonOpaquePointerElementType() << "\n";
@@ -584,7 +665,7 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                     }
                     if (GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(&I)) {
                         //errs() << "GEP Instruction: " << *gep << "\n";
-                        errs() << "    GEP Inst Var name: " << findVariableName2(gep) << "\n";
+                        errs() << "    GEP Inst Var name: " << findVariableNameImpl(gep) << "\n";
                         errs() << "    GEP type: " << *gep->getType() << "\n";
                         errs() << "    GEP deref type: " << *gep->getType()->getNonOpaquePointerElementType() << "\n";
                         if (std::strcmp(gep->getOpcodeName(), "getelementptr") == 0) {
@@ -690,6 +771,7 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                     */
 
 
+
 extern "C" LLVM_ATTRIBUTE_WEAK::llvm::PassPluginLibraryInfo
 llvmGetPassPluginInfo() {
     return {
@@ -697,10 +779,14 @@ llvmGetPassPluginInfo() {
         .PluginName = "Practice pass",
         .PluginVersion = "v0.1",
         .RegisterPassBuilderCallbacks = [](PassBuilder &PB) {
+            //PB.registerAnalysis<MemorySSAAnalysis>();
+            //PB.registerAnalysis(MemorySSAAnalysis());
             PB.registerPipelineStartEPCallback(
                 [](ModulePassManager &MPM, OptimizationLevel Level) {
+                    //MPM.addPass(MemorySSAPass());
                     MPM.addPass(PracticePass());
                 });
         }
     };
 }
+
