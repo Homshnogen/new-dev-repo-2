@@ -454,6 +454,8 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
         std::unordered_set<std::string> funcArgs;
         std::unordered_set<std::string> memAccs;
         std::unordered_set<std::string> memSSAs;
+        std::vector<std::string> dataOps;
+        std::unordered_set<std::string> loadPtrs;
 
 
         for (auto &G : M.globals()) {
@@ -534,7 +536,45 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
                             temps << *alloca;
                             varUnnamed.insert(temp);
                         }
+                    } else if (CallBase *ci = dyn_cast<CallBase>(&I)) {
+                        if (ci->getCalledFunction() && !ci->getCalledFunction()->isDeclaration()) {
+                            {
+                                std::string temp;
+                                raw_string_ostream temps(temp);
+                                temps << "call: " << *ci;
+                                //dataOps.push_back(temp);
+                            }
+                            for (Use &use : ci->args()) {
+                                if (GlobalVariable *gv = dyn_cast<GlobalVariable>(use.get())) {
+
+                                    {
+                                        std::string temp;
+                                        raw_string_ostream temps(temp);
+                                        temps << "call: " << *ci;
+                                        dataOps.push_back(temp);
+                                    }
+                                    std::string temp;
+                                    raw_string_ostream temps(temp);
+                                    temps << "    use: " << findVariableName(use.get());
+                                    dataOps.push_back(temp);
+                                }
+                            }
+                        }
                     } else if (LoadInst *loadI = dyn_cast<LoadInst>(&I)) {
+
+                        if (Instruction *lptr = dyn_cast<Instruction>(loadI->getPointerOperand())) {
+                            loadPtrs.insert(lptr->getOpcodeName());
+                        } else if (ConstantExpr *lptr = dyn_cast<ConstantExpr>(loadI->getPointerOperand())) {
+                            std::string temp;
+                            raw_string_ostream temps(temp);
+                            temps << "expr:" << lptr->getOpcodeName();
+                            loadPtrs.insert(temp);
+                        } else {
+                            std::string temp;
+                            raw_string_ostream temps(temp);
+                            temps << "other:" << *loadI->getPointerOperand();
+                            loadPtrs.insert(temp);
+                        }
                         std::string loadstr = findVariableName(loadI);
                         //errs() << "VarName load : " << loadstr << '\n';
                         if (loadstr.find("unnamed") != std::string::npos) {
@@ -601,6 +641,12 @@ struct PracticePass : public PassInfoMixin<PracticePass> {
         }
         for (std::string const &str : memSSAs) {
             errs() << "memoryssa : " << str << '\n';
+        }
+        for (std::string const &str : dataOps) {
+            errs() << "data ops : " << str << '\n';
+        }
+        for (std::string const &str : loadPtrs) {
+            errs() << "load ptrs : " << str << '\n';
         }
         return PreservedAnalyses::all();
     };
