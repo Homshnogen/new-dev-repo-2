@@ -14,20 +14,20 @@ passes/BranchPointerProfilerPass.so: src/BranchPointerProfiler.cpp
 
 test-cases: all test-output/hello.ll test-output/something.ll test-output/mcf.ll test-output/test.ll
 
-test-output/hello.ll: passes/BranchPointerProfilerPass.so test-cases/hello.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/hello.c -o test-output/hello.ll
+test-output/hello.ll: passes/CriticalInputPass.so test-cases/hello.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/hello.c -o test-output/hello.ll
 	@# clang test-output/hello.ll -o test-output/hello
 
-test-output/something.ll: passes/BranchPointerProfilerPass.so test-cases/something.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/something.c -o test-output/something.ll
+test-output/something.ll: passes/CriticalInputPass.so test-cases/something.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/something.c -o test-output/something.ll
 	@# clang test-output/something.ll -o test-output/something
 
-test-output/mcf.ll: passes/BranchPointerProfilerPass.so test-cases/mcf.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/mcf.c -o test-output/mcf.ll
+test-output/mcf.ll: passes/CriticalInputPass.so test-cases/mcf.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/mcf.c -o test-output/mcf.ll
 	@# clang test-output/mcf.ll -o test-output/mcf
 
-test-output/test.ll: passes/BranchPointerProfilerPass.so test-cases/test.c
-	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/BranchPointerProfilerPass.so" -S test-cases/test.c -o test-output/test.ll
+test-output/test.ll: passes/CriticalInputPass.so test-cases/test.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/test.c -o test-output/test.ll
 	@# clang test-output/test.ll -o test-output/test
 
 clean-test-cases: clean-mcf-output
@@ -52,6 +52,9 @@ test-mcf: passes/PracticePass.so test-cases/mcf.c
 
 test-ci: passes/CriticalInputPass.so test-cases/test.c
 	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/test.c -o test-output/test.ll
+
+test-ci-hello: passes/CriticalInputPass.so test-cases/hello.c
+	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/hello.c -o test-output/hello.ll
 
 test-ci-mcf: passes/CriticalInputPass.so test-cases/mcf.c
 	clang $(DEBUG_FLAGS) -emit-llvm -fpass-plugin="passes/CriticalInputPass.so" -S test-cases/mcf.c -o test-output/mcf.ll
