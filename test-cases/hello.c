@@ -8,27 +8,28 @@ void thing(int a, int b) {
 
 void unthing(int a, int b) {
     printf("Hello World! %d cnt*tell\n", a*b);
+    thing(a, b);
 }
 
 int main(int argc, const char* argv[]) {
-    printf("Hello World!\n");
+    printf("put two numbers\n");
     int cnt, tell;
-    FILE *file;
-    if (argc == 2) {
-        fopen(argv[1], "r");
-    }
-    char c;
-    void (*fptr)(int, int);
     scanf("%d %d", &tell, &cnt);
 
-    fptr = !feof(file) ? &thing : &unthing;
-    
-    (*fptr)(cnt, tell);
-    while ((c = getc(file))) {
-        if (c > 'a' && c < 'g') {
-            printf("%c", c);
+    unthing(cnt, tell);
+    FILE *file;
+    if (argc == 2) {
+        file = fopen(argv[1], "r");
+        char c;
+        while (!feof(file)) {
+            c = getc(file);
+            if (c > 'a' && c < 'g') {
+                printf("%c", c);
+            }
         }
+        fclose(file);
+        printf("\n");
     }
-    fclose(file);
+
     return 0;
 }

@@ -9,12 +9,14 @@ int carat(int a) {
 }
 
 int main() {
-    printf("Helo %d'z nuts", carat(41));
-    printf("Helo %d'z nuts", carat(carat(41)));
+    printf("Helo %d\n", carat(41));
+    printf("Helo %d\n", carat(carat(41)));
     int cal;
-    scanf("%d", &cal);
+    int other;
+    printf("Put two numbers\n");
+    scanf("%d %d", &cal, &other);
     int (*fptr)(int) = (cal%2 == 1) ? &carat : &flor;
-    printf("Helo %d'z nuts", (*fptr)(10));
+    printf("Helo %d\n", (*fptr)(other));
     
     return 0;
 }
