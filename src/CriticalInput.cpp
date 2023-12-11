@@ -23,7 +23,7 @@ namespace { // anonymous namespace for same-file linkage
 #define debug(args) ;
 #endif
 
-#define DEBUG2 1
+#define DEBUG2 0
 
 #if DEBUG2
 #define debug2(args) dbgs() << args << '\n';
@@ -40,8 +40,19 @@ struct ArgDataIn {
 };
 
 struct FunctionInputData {
+    enum UI_TYPES{
+        NONE = 0,
+        SCANF,
+        FOPEN,
+        FGETS0,
+        FGETS,
+        FREAD0,
+        FREAD,
+        GETC,
+        FEOF,
+    };
     bool started, finished; // false
-    bool userInput; // false
+    UI_TYPES uiType = UI_TYPES::NONE; // false
     std::map<unsigned, ArgDataIn> args; // {}
     std::map<GlobalVariable*, ArgDataIn> globals; // {}
 };
@@ -110,7 +121,7 @@ bool isArgDataInEmpty(ArgDataIn &data) {
 }
 
 bool isFnInputEmpty(FunctionInputData &data) {
-    if (data.userInput) {return false;}
+    if (data.uiType != FunctionInputData::UI_TYPES::NONE) {return false;} // input non NONE
     for (auto &entry : data.args) { // key = first, value = second
         if (!isArgDataInEmpty(entry.second)) {
             return false;
@@ -132,7 +143,12 @@ void AddArgDataIn(ArgDataIn &retData, ArgDataIn &fromData) {
 }
 void AddFnInputs(FunctionInputData &retData, FunctionInputData &fromData, unsigned n) {
     // copy args
-    retData.userInput = retData.userInput || fromData.userInput;
+    //retData.userInput = retData.userInput || fromData.userInput;
+    if (fromData.uiType != FunctionInputData::UI_TYPES::NONE) {
+        retData.uiType = fromData.uiType;
+    } else {
+        //retData.uiType = fromData.uiType || retData.uiType; // maybe ERROR
+    }
     for (auto &entry : fromData.args) { // key = first, value = second
         if (entry.first < n) {AddArgDataIn(retData.args[entry.first], entry.second);}
     }
@@ -738,17 +754,6 @@ FunctionInputData &FunctionBacktrackRuntime(Function *F, std::unordered_set<Func
                             AddFnInputs(fnRunDep[F], InstructionBacktrackValue(next, analysisParents), F->arg_size()); // arg dependency is transferred (truncated for inaccuracy) TODO: don't truncate, propagate
                         }
                     }
-                    /*
-                    for (unsigned index : FunctionBacktrackRuntime(nextF, analysisParents)) {
-                        // check runtime-determining arguments passed into call
-                        if (Instruction *nextI = dyn_cast<Instruction>(ci->getArgOperand(index))) {
-                            //AddArgDataIn(fnRunDep[F], nextI, analysisParents);
-                        } else {
-                            // arg was constant?
-                            debug("arg was constant?: " << *ci->getArgOperand(index))
-                        }
-                    }
-                    */
                 } else {
                     // called function pointer
                     Value *next = ci->getCalledOperand();
@@ -798,6 +803,77 @@ void getStoreValFromLoad(std::unordered_set<Value*> &retData, Instruction *load,
         }
     }
 }
+void checkNewUserInput(FunctionInputData &retData, Value *val) {
+    {
+        std::string temp;
+        raw_string_ostream temps(temp);
+        switch (instValDep[val].uiType) {
+            case FunctionInputData::UI_TYPES::NONE:
+            break;
+            case FunctionInputData::UI_TYPES::SCANF:
+            temps << "User input depends on scanf call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FOPEN:
+            temps << "User input depends on FOPEN call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FGETS0:
+            temps << "User input depends on FGETS0 call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FGETS:
+            temps << "User input depends on FGETS call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FREAD0:
+            temps << "User input depends on FREAD0 call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FREAD:
+            temps << "User input depends on FREAD call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::GETC:
+            temps << "User input depends on GETC call : " << *val;
+            break;
+            case FunctionInputData::UI_TYPES::FEOF:
+            temps << "User input depends on FEOF call : " << *val;
+            break;
+        }
+        if (MAIN_RT && temp.length()>0) {
+            userInputDep.insert(temp); 
+            instValDep[val].uiType = FunctionInputData::UI_TYPES::NONE;
+        }
+    }
+}
+void propUserInput(FunctionInputData &retData, CallBase *cb, Use *use, std::unordered_set<Function*> &analysisParents, FunctionInputData::UI_TYPES uiType) {
+    {
+        bool isRetval = (use == nullptr) || (use->get() == cb->getCalledOperand());
+        Function *F = cb->getFunction();
+        switch (uiType) {
+            case FunctionInputData::UI_TYPES::NONE:
+            break;
+            case FunctionInputData::UI_TYPES::SCANF:
+            break;
+            case FunctionInputData::UI_TYPES::FOPEN:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(0), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::FGETS0:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(2), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::FGETS:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(2), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::FREAD0:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(3), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::FREAD:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(3), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::GETC:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(0), analysisParents), F->arg_size());
+            break;
+            case FunctionInputData::UI_TYPES::FEOF:
+                AddFnInputs(retData, InstructionBacktrackValue(cb->getArgOperand(0), analysisParents), F->arg_size());
+            break;
+        }
+    }
+}
 void fptrTryGetValuesRecurse(std::unordered_set<Function*> &retData, Value *val) { // nullptr if couldn't find value
     if (val == nullptr) { // failed try
         retData.insert(nullptr);
@@ -837,8 +913,8 @@ std::unordered_set<Function*> fptrTryGetValues(Value *val) { // nullptr if could
     return ret;
 }
 
-bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
-    bool ret = false;
+FunctionInputData::UI_TYPES isFptrUserInput(CallBase *call, Use *use, Function* cf) {
+    FunctionInputData::UI_TYPES ret = FunctionInputData::UI_TYPES::NONE;
     // fp, technically could be input; TODO: check fp possible values
     Value *fptr = call->getCalledOperand();
     bool isRetval = (use == nullptr) || (fptr == use->get());
@@ -854,21 +930,51 @@ bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
             raw_string_ostream temps(temp);
             temps << "Runtime depends on user input from console, line " << call->getDebugLoc().getLine() << ", input #" << call->getArgOperandNo(use);
             if (MAIN_RT) {userInputDep.insert(temp);}
-            ret = true;
+            ret = FunctionInputData::UI_TYPES::SCANF;
         }
     } else if (fname.equals("fgets")) { // char *fgets(char *str, int count, FILE *stream), input from file stream, retval is null if end of file - depend on size of file
         if (isRetval) {
             std::string temp;
             raw_string_ostream temps(temp);
-            temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
-            ret = true;
+            temps << "Runtime depends on size of file or file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
+            ret = FunctionInputData::UI_TYPES::FGETS0;
             if (MAIN_RT) {userInputDep.insert(temp);}
         } else if (call->getArgOperandNo(use) == 0) {
             std::string temp;
             raw_string_ostream temps(temp);
             temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
             if (MAIN_RT) {userInputDep.insert(temp);}
-            ret = true;
+            ret = FunctionInputData::UI_TYPES::FGETS;
+        }
+    } else if (fname.equals("getc") || fname.equals("fgetc")) { // 
+        if (isRetval) {
+            std::string temp;
+            raw_string_ostream temps(temp);
+            temps << "Runtime depends on file size, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
+            ret = FunctionInputData::UI_TYPES::GETC;
+            if (MAIN_RT) {userInputDep.insert(temp);}
+        }
+    } else if (fname.equals("feof")) { // 
+        if (isRetval) {
+            std::string temp;
+            raw_string_ostream temps(temp);
+            temps << "Runtime depends on size or existance of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
+            ret = FunctionInputData::UI_TYPES::FEOF;
+            if (MAIN_RT) {userInputDep.insert(temp);}
+        }
+    } else if (fname.equals("fread")) { // 
+        if (isRetval) {
+            std::string temp;
+            raw_string_ostream temps(temp);
+            temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(3));
+            ret = FunctionInputData::UI_TYPES::FREAD0;
+            if (MAIN_RT) {userInputDep.insert(temp);}
+        } else if (call->getArgOperandNo(use) == 0) {
+            std::string temp;
+            raw_string_ostream temps(temp);
+            temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(3));
+            if (MAIN_RT) {userInputDep.insert(temp);}
+            ret = FunctionInputData::UI_TYPES::FREAD;
         }
     } else if (fname.equals("fopen")) { // FILE * fopen ( const char * filename, const char * mode ), input from file, name filename, -assume mode is reading if from fgets
         if (isRetval) { // todo - check mode
@@ -876,16 +982,16 @@ bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
             raw_string_ostream temps(temp);
             std::string mode = findVariableName(call->getOperand(1));
             if(mode.find("r") != std::string::npos) {
-                temps << "Runtime depends on file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
+                temps << "Runtime depends on file contents or existance, line " << call->getDebugLoc().getLine() << ", file name location: " << findVariableName(call->getArgOperand(0));
                 if (MAIN_RT) {userInputDep.insert(temp);}
-                ret = true;
+                ret = FunctionInputData::UI_TYPES::FOPEN;
             }
         }
     } else {}
     return ret;
 }
-bool isNonFptrUserInput(CallBase *call, Use *use) {
-    bool ret = false;
+FunctionInputData::UI_TYPES isNonFptrUserInput(CallBase *call, Use *use) {
+    FunctionInputData::UI_TYPES ret = FunctionInputData::UI_TYPES::NONE;
     if (Function *cf = call->getCalledFunction()) {
         bool isRetval =  (use == nullptr) || (cf == use->get());
         StringRef fname = cf->getName();
@@ -894,27 +1000,56 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
         debug("ftest " << fname)
         // begin user input
         if (fname.equals("scanf") || fname.equals("__isoc99_scanf")) { // int scanf ( const char * format, ... ), user input, numarg - 1
-
             if (!isRetval) {
                 std::string temp;
                 raw_string_ostream temps(temp);
                 temps << "Runtime depends on user input from console, line " << call->getDebugLoc().getLine() << ", input #" << call->getArgOperandNo(use);
                 if (MAIN_RT) {userInputDep.insert(temp);}
-                ret = true;
+                ret = FunctionInputData::UI_TYPES::SCANF;
             }
         } else if (fname.equals("fgets")) { // char *fgets(char *str, int count, FILE *stream), input from file stream, retval is null if end of file - depend on size of file
             if (isRetval) {
                 std::string temp;
                 raw_string_ostream temps(temp);
-                temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
-                ret = true;
+                temps << "Runtime depends on size of file or file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
+                ret = FunctionInputData::UI_TYPES::FGETS0;
                 if (MAIN_RT) {userInputDep.insert(temp);}
             } else if (call->getArgOperandNo(use) == 0) {
                 std::string temp;
                 raw_string_ostream temps(temp);
                 temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
                 if (MAIN_RT) {userInputDep.insert(temp);}
-                ret = true;
+                ret = FunctionInputData::UI_TYPES::FGETS;
+            }
+        } else if (fname.equals("getc") || fname.equals("fgetc")) { // 
+            if (isRetval) {
+                std::string temp;
+                raw_string_ostream temps(temp);
+                temps << "Runtime depends on file size, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0)); // common usage
+                ret = FunctionInputData::UI_TYPES::GETC;
+                if (MAIN_RT) {userInputDep.insert(temp);}
+            }
+        } else if (fname.equals("feof")) { // 
+            if (isRetval) {
+                std::string temp;
+                raw_string_ostream temps(temp);
+                temps << "Runtime depends on size or existance of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
+                ret = FunctionInputData::UI_TYPES::FEOF;
+                if (MAIN_RT) {userInputDep.insert(temp);}
+            }
+        } else if (fname.equals("fread")) { // 
+            if (isRetval) {
+                std::string temp;
+                raw_string_ostream temps(temp);
+                temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(3));
+                ret = FunctionInputData::UI_TYPES::FREAD0;
+                if (MAIN_RT) {userInputDep.insert(temp);}
+            } else if (call->getArgOperandNo(use) == 0) {
+                std::string temp;
+                raw_string_ostream temps(temp);
+                temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(3));
+                if (MAIN_RT) {userInputDep.insert(temp);}
+                ret = FunctionInputData::UI_TYPES::FREAD;
             }
         } else if (fname.equals("fopen")) { // FILE * fopen ( const char * filename, const char * mode ), input from file, name filename, -assume mode is reading if from fgets
             if (isRetval) { // todo - check mode
@@ -922,9 +1057,9 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
                 raw_string_ostream temps(temp);
                 std::string mode = findVariableName(call->getOperand(1));
                 if(mode.find("r") != std::string::npos) {
-                    temps << "Runtime depends on file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
+                temps << "Runtime depends on file contents or existance, line " << call->getDebugLoc().getLine() << ", file name location: " << findVariableName(call->getArgOperand(0));
                     if (MAIN_RT) {userInputDep.insert(temp);}
-                    ret = true;
+                    ret = FunctionInputData::UI_TYPES::FOPEN;
                 }
             }
         } else {}
@@ -945,11 +1080,43 @@ FunctionOutputData &FunctionBacktrackValue(Function *F, std::unordered_set<Funct
             StringRef fname = F->getName();
             // begin user input; handled in is...UserInput
             if (fname.equals("scanf") || fname.equals("__isoc99_scanf")) { // int scanf ( const char * format, ... ), user input, numarg - 1
-                debug("bad scanf")
+                debug2("new scanf")
+                for (unsigned i = 1; i < 20; i++) { // as high as i will go for varargs; TODO: actual infinite using flags
+                    fnValDep[F].args[i].members[0].inputs.uiType = FunctionInputData::UI_TYPES::SCANF;
+                    fnValDep[F].args[i].inputs.uiType = FunctionInputData::UI_TYPES::SCANF;
+                }
             } else if (fname.equals("fgets")) { // char *fgets(char *str, int count, FILE *stream), input from file stream, retval is null if end of file - depend on size of file
-                debug("bad fgets")
+                debug2("new fgets")
+                fnValDep[F].retval.members[0].inputs.uiType = FunctionInputData::UI_TYPES::FGETS0;
+                fnValDep[F].retval.inputs.uiType = FunctionInputData::UI_TYPES::FGETS0;
+                fnValDep[F].args[0].members[0].inputs.uiType = FunctionInputData::UI_TYPES::FGETS;
+                fnValDep[F].args[0].inputs.uiType = FunctionInputData::UI_TYPES::FGETS;
+                fnValDep[F].retval.members[0].inputs.args[2].used = true;
+                fnValDep[F].retval.inputs.args[2].used = true;
+                fnValDep[F].args[0].members[0].inputs.args[2].used = true;
+                fnValDep[F].args[0].inputs.args[2].used = true;
             } else if (fname.equals("fopen")) { // FILE * fopen ( const char * filename, const char * mode ), input from file, name filename, -assume mode is reading if from fgets
-                debug("bad fopen")
+                debug2("new fopen")
+                fnValDep[F].retval.members[0].inputs.args[0].used = true;
+                fnValDep[F].retval.inputs.args[0].used = true;
+                fnValDep[F].retval.members[0].inputs.uiType = FunctionInputData::UI_TYPES::FOPEN;
+                fnValDep[F].retval.inputs.uiType = FunctionInputData::UI_TYPES::FOPEN;
+            } else if (fname.equals("fread")) { // size_t fread ( void * ptr, size_t size, size_t count, FILE * stream ), fread gets data from arg4 into arg1 and returns size read;
+                debug2("new fread")
+                fnValDep[F].retval.members[0].inputs.uiType = FunctionInputData::UI_TYPES::FREAD0;
+                fnValDep[F].retval.inputs.uiType = FunctionInputData::UI_TYPES::FREAD0;
+                fnValDep[F].args[0].members[0].inputs.uiType = FunctionInputData::UI_TYPES::FREAD;
+                fnValDep[F].args[0].inputs.uiType = FunctionInputData::UI_TYPES::FREAD;
+                fnValDep[F].retval.members[0].inputs.args[3].used = true;
+                fnValDep[F].retval.inputs.args[3].used = true;
+                fnValDep[F].args[0].members[0].inputs.args[3].used = true;
+                fnValDep[F].args[0].inputs.args[3].used = true;
+            } else if (fname.equals("fgetc") || fname.equals("getc")) { // int fgetc ( FILE * stream ), getc gets charactrer from stream;
+                debug2("new getc/fgetc")
+                fnValDep[F].retval.members[0].inputs.uiType = FunctionInputData::UI_TYPES::GETC;
+                fnValDep[F].retval.inputs.uiType = FunctionInputData::UI_TYPES::GETC;
+                fnValDep[F].retval.members[0].inputs.args[0].used = true;
+                fnValDep[F].retval.inputs.args[0].used = true;
             // begin nonvoid used
             } else if (fname.equals("atoi")) { // int atoi (const char * str), returns int from string
                 fnValDep[F].retval.members[0].inputs.args[0].used = true;
@@ -1045,19 +1212,21 @@ FunctionOutputData &FunctionBacktrackValue(Function *F, std::unordered_set<Funct
             for (CallBase *call : callbases){
                 if (Function *cf = call->getCalledFunction()) {
                     debug("FBV Call Func: " << *call)
-                    if (isNonFptrUserInput(call, nullptr)) { // external function call
-                        debug("FBV User Input")
+                    if (FunctionInputData::UI_TYPES uiType = isNonFptrUserInput(call, nullptr)) {
+                        //used = true;
+                        //propUserInput(instValDep[val], call, nullptr, analysisParents, uiType);
                     } else {
                         // get val dep of arg
                         FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                         for (Use &arg : call->args()) {
                             MemoryRecord memrec = getMemoryRecord(arg.get());
                             if (memrec.isArg) { // can also be global
-                                debug("FBV found arg dependency")
+                                debug2("FBV found arg dependency")
                             }
-                            //FunctionInputData &newInputs = getArgDataIn(calldata, memrec);
-                            FunctionInputData &newInputs = calldata.args[call->getArgOperandNo(&arg)].members[0].inputs; // arg no
-                            markArgDataOut(fnValDep[F], newInputs, memrec);
+                            //FunctionInputData &newinputs = getArgDataIn(calldata, memrec);
+                            FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].members[0].inputs; // arg no
+                            checkNewUserInput(newinputs, arg.get());
+                            markArgDataOut(fnValDep[F], newinputs, memrec);
                         }
                         // copy globals
                         for (auto &entry : calldata.globals) { // key = first, value = second
@@ -1067,18 +1236,20 @@ FunctionOutputData &FunctionBacktrackValue(Function *F, std::unordered_set<Funct
                 } else {
                     debug("FBV Call Func pointer Instruction: " << *call)
                     for (Function *cf : fptrTryGetValues(call->getCalledOperand())) {
-                        if (isFptrUserInput(call, nullptr, cf)) {
-                            debug("FBV Fptr user input")
+                        if (FunctionInputData::UI_TYPES uiType = isFptrUserInput(call, nullptr, cf)) {
+                            //used = true;
+                            //propUserInput(instValDep[val], call, nullptr, analysisParents, uiType);
                         } else {
                             // get val dep of arg
                             FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                             for (Use &arg : call->args()) {
                                 MemoryRecord memrec = getMemoryRecord(arg.get());
                                 if (memrec.isArg) { // can also be global
-                                    debug("FBV found fptr arg dependency")
+                                    debug2("FBV found fptr arg dependency")
                                 }
-                                FunctionInputData &newInputs = calldata.args[call->getArgOperandNo(&arg)].members[0].inputs; // arg no
-                                markArgDataOut(fnValDep[F], newInputs, memrec);
+                                FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].members[0].inputs; // arg no
+                                checkNewUserInput(newinputs, arg.get());
+                                markArgDataOut(fnValDep[F], newinputs, memrec);
                             }
                             // copy globals
                             for (auto &entry : calldata.globals) { // key = first, value = second
@@ -1151,12 +1322,14 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
             for (Use &arg : call->args()) {
                 if (arg.get() == val) {
                     in_call = true;
-                    if (isNonFptrUserInput(call, &arg)) {
+                    if (FunctionInputData::UI_TYPES uiType = isNonFptrUserInput(call, &arg)) {
+                        propUserInput(instValDep[val], call, &arg, analysisParents, uiType);
                         used = true;
                     } else if (Function *cf = call->getCalledFunction()) {
                         debug("loadwalk test1")
                         FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                         FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs;
+                        checkNewUserInput(newinputs, arg.get());
                         if (!isFnInputEmpty(newinputs)) {
                             used = true;
                             for (unsigned argno = 0; argno < call->arg_size(); argno++) {
@@ -1170,19 +1343,25 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
                         }
                     } else { // fptr
                         for (Function *cf : fptrTryGetValues(call->getCalledOperand())) {
-                        debug("loadwalk test2")
-                            FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
-                            // may contain multiple times
-                            FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs;
-                            if (!isFnInputEmpty(newinputs)) {
+                            debug("loadwalk test2")
+                            if (FunctionInputData::UI_TYPES uiType = isFptrUserInput(call, &arg, cf)) {
                                 used = true;
-                                for (unsigned argno = 0; argno < call->arg_size(); argno++) {
-                                    if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
-                                        AddFnInputs(retData, InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
+                                propUserInput(instValDep[val], call, &arg, analysisParents, uiType);
+                            } else {
+                                FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
+                                // may contain multiple times
+                                FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs;
+                                checkNewUserInput(newinputs, arg.get());
+                                if (!isFnInputEmpty(newinputs)) {
+                                    used = true;
+                                    for (unsigned argno = 0; argno < call->arg_size(); argno++) {
+                                        if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
+                                            AddFnInputs(retData, InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
+                                        }
                                     }
-                                }
-                                for (auto &entry : newinputs.globals) {
-                                    AddArgDataIn(retData.globals[entry.first], entry.second);
+                                    for (auto &entry : newinputs.globals) {
+                                        AddArgDataIn(retData.globals[entry.first], entry.second);
+                                    }
                                 }
                             }
                         }
@@ -1192,12 +1371,14 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
                     for (Use &arg2 : expr->operands()) {
                         if (arg2.get() == val) {
                             in_call = true;
-                            if (isNonFptrUserInput(call, &arg)) {
+                            if (FunctionInputData::UI_TYPES uiType = isNonFptrUserInput(call, &arg)) {
+                                propUserInput(instValDep[val], call, &arg, analysisParents, uiType);
                                 used = true;
                             } else if (Function *cf = call->getCalledFunction()) {
-                        debug("loadwalk test3")
+                                debug("loadwalk test3")
                                 FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                                 FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs; // correct use of arg over arg2
+                                checkNewUserInput(newinputs, arg.get());
                                 if (!isFnInputEmpty(newinputs)) {
                                     used = true;
                                     for (unsigned argno = 0; argno < call->arg_size(); argno++) {
@@ -1211,19 +1392,25 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
                                 }
                             } else { // fptr
                                 for (Function *cf : fptrTryGetValues(call->getCalledOperand())) {
-                        debug("loadwalk test4")
-                                    FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
-                                    // may contain multiple times
-                                    FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs; // correct use of arg over arg2
-                                    if (!isFnInputEmpty(newinputs)) {
+                                    debug("loadwalk test4")
+                                    if (FunctionInputData::UI_TYPES uiType = isFptrUserInput(call, &arg, cf)) {
                                         used = true;
-                                        for (unsigned argno = 0; argno < call->arg_size(); argno++) {
-                                            if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
-                                                AddFnInputs(retData, InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
+                                        propUserInput(instValDep[val], call, nullptr, analysisParents, uiType);
+                                    } else {
+                                        FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
+                                        // may contain multiple times
+                                        FunctionInputData &newinputs = calldata.args[call->getArgOperandNo(&arg)].inputs; // correct use of arg over arg2
+                                        checkNewUserInput(newinputs, arg.get());
+                                        if (!isFnInputEmpty(newinputs)) {
+                                            used = true;
+                                            for (unsigned argno = 0; argno < call->arg_size(); argno++) {
+                                                if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
+                                                    AddFnInputs(retData, InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
+                                                }
                                             }
-                                        }
-                                        for (auto &entry : newinputs.globals) {
-                                            AddArgDataIn(retData.globals[entry.first], entry.second);
+                                            for (auto &entry : newinputs.globals) {
+                                                AddArgDataIn(retData.globals[entry.first], entry.second);
+                                            }
                                         }
                                     }
                                 }
@@ -1344,13 +1531,15 @@ FunctionInputData &InstructionBacktrackValue(Value *val, std::unordered_set<Func
                 
                 if (Function *cf = call->getCalledFunction()) {
                     debug("Call Input: " << *call)
-                    if (isNonFptrUserInput(call, nullptr)) { // external function call
+                    if (FunctionInputData::UI_TYPES uiType = isNonFptrUserInput(call, nullptr)) { // external function call
                         debug("User Input")
+                        propUserInput(instValDep[val], call, nullptr, analysisParents, uiType);
                     } else {
                         // get val dep of retval
                         FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                         for (Use &arg : call->args()) {
                             FunctionInputData &newinputs = calldata.retval.inputs; // retval
+                            checkNewUserInput(newinputs, arg.get());
                             for (unsigned argno = 0; argno < cf->arg_size(); argno++) {
                                 if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
                                     AddFnInputs(instValDep[val], InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
@@ -1364,13 +1553,15 @@ FunctionInputData &InstructionBacktrackValue(Value *val, std::unordered_set<Func
                 } else {
                     debug("Call Func pointer Instruction: " << *call)
                     for (Function *cf : fptrTryGetValues(call->getCalledOperand())) {
-                        if (isFptrUserInput(call, nullptr, cf)) {
+                        if (FunctionInputData::UI_TYPES uiType = isFptrUserInput(call, nullptr, cf)) {
                             debug("Fptr user input")
+                            propUserInput(instValDep[val], call, nullptr, analysisParents, uiType);
                         } else {
                             // get val dep of retval
                             FunctionOutputData &calldata = FunctionBacktrackValue(cf, analysisParents);
                             for (Use &arg : call->args()) {
                                 FunctionInputData &newinputs = calldata.retval.inputs; // retval
+                                checkNewUserInput(newinputs, arg.get());
                                 for (unsigned argno = 0; argno < cf->arg_size(); argno++) {
                                     if ((newinputs.args.find(argno) != newinputs.args.end()) && !isArgDataInEmpty(newinputs.args[argno])) { // truncated
                                         AddFnInputs(instValDep[val], InstructionBacktrackValue(call->getArgOperand(argno), analysisParents), F->arg_size());
@@ -1571,7 +1762,7 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
             MAIN_RT = true;
             std::unordered_set<Function*> mainAnalysisParents = std::unordered_set<Function*>();
             FunctionInputData &mainArgs = FunctionBacktrackRuntime(Main, mainAnalysisParents);
-            MAIN_RT = false;
+            //MAIN_RT = false;
             std::unordered_set<Function*> mainAnalysisParents2 = std::unordered_set<Function*>();
             FunctionOutputData &mainOuts = FunctionBacktrackValue(Main, mainAnalysisParents2);
             for (MemoryRecord &input : getInputMemory(mainArgs)) {
