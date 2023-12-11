@@ -15,15 +15,24 @@ using namespace llvm;
 
 namespace { // anonymous namespace for same-file linkage
 
-#define DEBUG 1
+#define DEBUG 0
 
 #if DEBUG
 #define debug(args) dbgs() << args << '\n';
 #else
 #define debug(args) ;
 #endif
+
+#define DEBUG2 1
+
+#if DEBUG2
+#define debug2(args) dbgs() << args << '\n';
+#else
+#define debug2(args) ;
+#endif
 // dbgs(), errs(), outs()
 
+bool MAIN_RT = true;
 
 struct ArgDataIn {
     bool used; // false
@@ -32,6 +41,7 @@ struct ArgDataIn {
 
 struct FunctionInputData {
     bool started, finished; // false
+    bool userInput; // false
     std::map<unsigned, ArgDataIn> args; // {}
     std::map<GlobalVariable*, ArgDataIn> globals; // {}
 };
@@ -100,6 +110,7 @@ bool isArgDataInEmpty(ArgDataIn &data) {
 }
 
 bool isFnInputEmpty(FunctionInputData &data) {
+    if (data.userInput) {return false;}
     for (auto &entry : data.args) { // key = first, value = second
         if (!isArgDataInEmpty(entry.second)) {
             return false;
@@ -114,13 +125,14 @@ bool isFnInputEmpty(FunctionInputData &data) {
 }
 
 void AddArgDataIn(ArgDataIn &retData, ArgDataIn &fromData) {
-    retData.used = fromData.used;
+    retData.used = retData.used || fromData.used;
     for (auto &entry : fromData.members) { // key = first, value = second
         AddArgDataIn(retData.members[entry.first], entry.second);
     }
 }
 void AddFnInputs(FunctionInputData &retData, FunctionInputData &fromData, unsigned n) {
     // copy args
+    retData.userInput = retData.userInput || fromData.userInput;
     for (auto &entry : fromData.args) { // key = first, value = second
         if (entry.first < n) {AddArgDataIn(retData.args[entry.first], entry.second);}
     }
@@ -680,6 +692,7 @@ void backtrackValuesFromCall(CallBase *call, MemoryRecord &Query) {
 
 std::unordered_set<Function*> fptrTryGetValues(Value *val);
 FunctionInputData &FunctionBacktrackRuntime(Function *F, std::unordered_set<Function*> &analysisParents) {
+    debug2("FBR : " << fnRunDep[F].started << " " << fnRunDep[F].finished << " " << F->getName())
     if (!fnRunDep[F].started) {
         if (analysisParents.find(F) != analysisParents.end()) {
             debug("uncaught FunctionBacktrackRuntime recursive call")
@@ -739,7 +752,7 @@ FunctionInputData &FunctionBacktrackRuntime(Function *F, std::unordered_set<Func
                 } else {
                     // called function pointer
                     Value *next = ci->getCalledOperand();
-                    debug("Called function pointer: " << *next)
+                    debug2("Called function pointer: " << *next)
                     AddFnInputs(fnRunDep[F], InstructionBacktrackValue(next, analysisParents), F->arg_size()); // recursion happens inside
                     for (Function *nextF : fptrTryGetValues(next)) {
                         FunctionInputData &nextInputs = FunctionBacktrackRuntime(nextF, analysisParents);
@@ -767,23 +780,34 @@ FunctionInputData &FunctionBacktrackRuntime(Function *F, std::unordered_set<Func
     return fnRunDep[F];
 }
 
-Value* getStoreValFromLoad(LoadInst *load) { // best effort
-    BasicBlock *B = load->getParent();
+void getStoreValFromLoad(std::unordered_set<Value*> &retData, Instruction *load, std::unordered_set<BasicBlock*> &loopDetection) { // best effort
     Instruction *walk = load->getPrevNonDebugInstruction();
     while (walk) {
         if (StoreInst *store = dyn_cast<StoreInst>(walk)) {
-            return store->getValueOperand();
+            retData.insert(store->getValueOperand());
+            return;
         }
         // end while
         walk = walk->getPrevNonDebugInstruction();
     }
-    return nullptr;
+    BasicBlock *B = load->getParent();
+    for (BasicBlock *pred : predecessors(B)) {
+        if (loopDetection.find(pred) == loopDetection.end()) {
+            loopDetection.insert(pred);
+            getStoreValFromLoad(retData, pred->getTerminator(), loopDetection);
+        }
+    }
 }
 void fptrTryGetValuesRecurse(std::unordered_set<Function*> &retData, Value *val) { // nullptr if couldn't find value
     if (val == nullptr) { // failed try
         retData.insert(nullptr);
     } else if (auto *load = dyn_cast<LoadInst>(val)) {
-        fptrTryGetValuesRecurse(retData, getStoreValFromLoad(load));
+        std::unordered_set<Value*> stores = std::unordered_set<Value*>();
+        std::unordered_set<BasicBlock*> loopDetection = std::unordered_set<BasicBlock*>();
+        getStoreValFromLoad(stores, load, loopDetection);
+        for (Value *store : stores) {
+            fptrTryGetValuesRecurse(retData, store);
+        }
     } else if (auto *phi = dyn_cast<PHINode>(val)) {
         for (Use &op : phi->incoming_values()) {
             fptrTryGetValuesRecurse(retData, op.get());
@@ -792,8 +816,11 @@ void fptrTryGetValuesRecurse(std::unordered_set<Function*> &retData, Value *val)
         fptrTryGetValuesRecurse(retData, select->getTrueValue());
         fptrTryGetValuesRecurse(retData, select->getFalseValue());
     } else if (auto *func = dyn_cast<Function>(val)) {
+        
+        debug2("tryfptr " << func->getName())
         retData.insert(func);
     } else { // failed try, unimplemented
+        debug2("tryfptr " << "failed")
         retData.insert(nullptr);
     }
 }
@@ -801,8 +828,11 @@ std::unordered_set<Function*> fptrTryGetValues(Value *val) { // nullptr if could
     std::unordered_set<Function*> ret = std::unordered_set<Function*>();
     fptrTryGetValuesRecurse(ret, val);
     if (ret.find(nullptr) != ret.end()) {
-        debug("failed to find all fptr values")
+        debug2("failed to find all fptr values")
         ret.erase(nullptr);
+    }
+    for (auto *F : ret) {
+        debug2("try fptr values : " << F->getName())
     }
     return ret;
 }
@@ -823,7 +853,7 @@ bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
             std::string temp;
             raw_string_ostream temps(temp);
             temps << "Runtime depends on user input from console, line " << call->getDebugLoc().getLine() << ", input #" << call->getArgOperandNo(use);
-            userInputDep.insert(temp);
+            if (MAIN_RT) {userInputDep.insert(temp);}
             ret = true;
         }
     } else if (fname.equals("fgets")) { // char *fgets(char *str, int count, FILE *stream), input from file stream, retval is null if end of file - depend on size of file
@@ -832,12 +862,12 @@ bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
             raw_string_ostream temps(temp);
             temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
             ret = true;
-            userInputDep.insert(temp);
+            if (MAIN_RT) {userInputDep.insert(temp);}
         } else if (call->getArgOperandNo(use) == 0) {
             std::string temp;
             raw_string_ostream temps(temp);
             temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
-            userInputDep.insert(temp);
+            if (MAIN_RT) {userInputDep.insert(temp);}
             ret = true;
         }
     } else if (fname.equals("fopen")) { // FILE * fopen ( const char * filename, const char * mode ), input from file, name filename, -assume mode is reading if from fgets
@@ -847,7 +877,7 @@ bool isFptrUserInput(CallBase *call, Use *use, Function* cf) {
             std::string mode = findVariableName(call->getOperand(1));
             if(mode.find("r") != std::string::npos) {
                 temps << "Runtime depends on file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
-                userInputDep.insert(temp);
+                if (MAIN_RT) {userInputDep.insert(temp);}
                 ret = true;
             }
         }
@@ -859,14 +889,17 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
     if (Function *cf = call->getCalledFunction()) {
         bool isRetval =  (use == nullptr) || (cf == use->get());
         StringRef fname = cf->getName();
+        debug("ftest " << *call)
+        debug("ftest " << isRetval)
+        debug("ftest " << fname)
         // begin user input
         if (fname.equals("scanf") || fname.equals("__isoc99_scanf")) { // int scanf ( const char * format, ... ), user input, numarg - 1
-            
+
             if (!isRetval) {
                 std::string temp;
                 raw_string_ostream temps(temp);
                 temps << "Runtime depends on user input from console, line " << call->getDebugLoc().getLine() << ", input #" << call->getArgOperandNo(use);
-                userInputDep.insert(temp);
+                if (MAIN_RT) {userInputDep.insert(temp);}
                 ret = true;
             }
         } else if (fname.equals("fgets")) { // char *fgets(char *str, int count, FILE *stream), input from file stream, retval is null if end of file - depend on size of file
@@ -875,12 +908,12 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
                 raw_string_ostream temps(temp);
                 temps << "Runtime depends on size of file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
                 ret = true;
-                userInputDep.insert(temp);
+                if (MAIN_RT) {userInputDep.insert(temp);}
             } else if (call->getArgOperandNo(use) == 0) {
                 std::string temp;
                 raw_string_ostream temps(temp);
                 temps << "Runtime depends on file contents, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(2));
-                userInputDep.insert(temp);
+                if (MAIN_RT) {userInputDep.insert(temp);}
                 ret = true;
             }
         } else if (fname.equals("fopen")) { // FILE * fopen ( const char * filename, const char * mode ), input from file, name filename, -assume mode is reading if from fgets
@@ -890,7 +923,7 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
                 std::string mode = findVariableName(call->getOperand(1));
                 if(mode.find("r") != std::string::npos) {
                     temps << "Runtime depends on file, line " << call->getDebugLoc().getLine() << ", file : " << findVariableName(call->getArgOperand(0));
-                    userInputDep.insert(temp);
+                    if (MAIN_RT) {userInputDep.insert(temp);}
                     ret = true;
                 }
             }
@@ -900,6 +933,7 @@ bool isNonFptrUserInput(CallBase *call, Use *use) {
     return ret;
 }
 FunctionOutputData &FunctionBacktrackValue(Function *F, std::unordered_set<Function*> &analysisParents) {
+    debug2("FBV : " << fnValDep[F].started << " " << fnValDep[F].finished << " " << F->getName())
     if (!fnValDep[F].started) {
         if (analysisParents.find(F) != analysisParents.end()) {
             debug("uncaught FunctionBacktrackValue recursive call")
@@ -1068,6 +1102,14 @@ FunctionOutputData &FunctionBacktrackValue(Function *F, std::unordered_set<Funct
 bool isConstantValue(Value *val) {
     if (auto *gvar = dyn_cast<GlobalVariable>(val)) {
         if (gvar->isConstant()) {return true;}
+    }else if (auto *expr = dyn_cast<ConstantExpr>(val)) {
+        debug("const expr : " << *expr)
+        for (Use &op : expr->operands()) {
+            if (!isConstantValue(op.get())) {
+                return false;
+            }
+        }
+        return true;
     } else if (isa<Constant>(val)) {
         return true;
     }
@@ -1075,18 +1117,31 @@ bool isConstantValue(Value *val) {
 }
 
 void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Value *val, std::unordered_set<Function*> &analysisParents, std::unordered_set<BasicBlock*> &loopDetection) {// recursive walking for load inst
-
+    debug2("IBLA inst " << *I)
+    debug2("IBLA val " << *val)
     // val is the load address, THERE ARE NO NESTED CONSTEXPR
     Instruction *walk = I;
     GlobalVariable *global = dyn_cast<GlobalVariable>(val);
     Function *F = I->getFunction();
     while (walk) {
-        if (val == walk) {return;}
         if (StoreInst *store = dyn_cast<StoreInst>(walk)) {
-            for (Use &op : store->uses()) {
+            if (store->getPointerOperand() == val) {
+                AddFnInputs(retData, InstructionBacktrackValue(store->getValueOperand(), analysisParents), F->arg_size()); // halt here
+                return;
+            }
+        } else if (auto *gep = dyn_cast<GetElementPtrInst>(walk)) { // maybe overkill
+            if (gep->getPointerOperand() == val) {
+                AddFnInputs(retData, InstructionBacktrackValue(gep, analysisParents), F->arg_size());
+                std::unordered_set<BasicBlock*> loop2  = std::unordered_set<BasicBlock*>();
+                    //std::unordered_set<BasicBlock*> loop2  = std::unordered_set<BasicBlock*>(loopDetection.begin(), loopDetection.end());
+                InstructionBacktrackLoadAddr(retData, I, gep, analysisParents, loop2);
+            }
+        } else if (auto *cast = dyn_cast<CastInst>(walk)) { // maybe overkill
+            for (Use &op : cast->operands()) { // only one
                 if (op.get() == val) {
-                    AddFnInputs(retData, InstructionBacktrackValue(store->getValueOperand(), analysisParents), F->arg_size()); // halt here
-                    return;
+                    AddFnInputs(retData, InstructionBacktrackValue(cast, analysisParents), F->arg_size());
+                    std::unordered_set<BasicBlock*> loop2  = std::unordered_set<BasicBlock*>();
+                    InstructionBacktrackLoadAddr(retData, I, cast, analysisParents, loop2);
                 }
             }
         } else if (CallBase *call = dyn_cast<CallBase>(walk)) {
@@ -1232,7 +1287,7 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
     debug("inst:" << I)
     BasicBlock *B = I->getParent();
     for (BasicBlock *pred : predecessors(B)) {
-        if (loopDetection.find(B) != loopDetection.end()) { // complete blocks
+        if (loopDetection.find(B) == loopDetection.end()) { // complete blocks
             loopDetection.insert(pred);
             InstructionBacktrackLoadAddr(retData, pred->getTerminator(), val, analysisParents, loopDetection);
         }
@@ -1241,10 +1296,11 @@ void InstructionBacktrackLoadAddr(FunctionInputData &retData, Instruction *I, Va
 std::unordered_set<std::string> unmarkInst;
 FunctionInputData &InstructionBacktrackValue(Value *val, std::unordered_set<Function*> &analysisParents) {
     if (val == nullptr) {
+        debug2("IBVnullptr")
         static FunctionInputData none = FunctionInputData();
         return none;
     }
-    debug("IBV " << *val)
+    debug2("IBV " << instValDep[val].started << " " << instValDep[val].finished << " : "<< *val)
     if (!instValDep[val].started) {
         instValDep[val].started = true;
         if (Instruction *I = dyn_cast<Instruction>(val)) {
@@ -1338,7 +1394,7 @@ FunctionInputData &InstructionBacktrackValue(Value *val, std::unordered_set<Func
             } else if (LoadInst *xi = dyn_cast<LoadInst>(I)) { // must come before UnaryInstruction!!!!
                 debug("Load Instruction: " << *xi)
                 Value *prev = xi->getPointerOperand();
-                if (!isConstantValue(xi)) { // input is constant
+                if (!isConstantValue(prev)) { // input is constant
                     AddFnInputs(instValDep[val], InstructionBacktrackValue(prev, analysisParents), F->arg_size());
                     {
                         std::unordered_set<BasicBlock*> loopDetection;
@@ -1349,6 +1405,14 @@ FunctionInputData &InstructionBacktrackValue(Value *val, std::unordered_set<Func
                             debug("Fancy load")
                             std::unordered_set<BasicBlock*> loopDetection;
                             InstructionBacktrackLoadAddr(instValDep[val], xi, cast, analysisParents, loopDetection);
+                        }
+                    }
+                    if (auto *expr = dyn_cast<ConstantExpr>(prev)) {
+                        for (Use &op : expr->operands()) {
+                            if (!isConstantValue(op.get())) {
+                                std::unordered_set<BasicBlock*> loopDetection;
+                                InstructionBacktrackLoadAddr(instValDep[val], xi, op.get(), analysisParents, loopDetection);
+                            }
                         }
                     }
                 } else {
@@ -1504,8 +1568,10 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
             }}
         }
         if (Function *Main = M.getFunction("main")) {
+            MAIN_RT = true;
             std::unordered_set<Function*> mainAnalysisParents = std::unordered_set<Function*>();
             FunctionInputData &mainArgs = FunctionBacktrackRuntime(Main, mainAnalysisParents);
+            MAIN_RT = false;
             std::unordered_set<Function*> mainAnalysisParents2 = std::unordered_set<Function*>();
             FunctionOutputData &mainOuts = FunctionBacktrackValue(Main, mainAnalysisParents2);
             for (MemoryRecord &input : getInputMemory(mainArgs)) {
@@ -1520,7 +1586,7 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
                                 temps << getInputRecordName(input) << " depends on number of command line arguments (main - argc)";
                             } else if (output.argIndex == 1) {// main argv 
                                 int i = (output.membertree.size() > 0) ? output.membertree[1] : 0; // or input.membertree[1]
-                                temps << getInputRecordName(input) << " depends on command line argument, #" << i << " (main - argv[" << i << "])";
+                                temps << getInputRecordName(input) << " depends on command line argument, #" << i+1 << " (main - argv[" << i << "])";
                             }
                             userInputDep.insert(temp);
                         }
@@ -1532,7 +1598,7 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
                         temps << "Runtime depends on number of command line arguments (main - argc)";
                     } else if (input.argIndex == 1) {// main argv 
                         int i = (input.membertree.size() >= 2) ? input.membertree[2] : 0; // or input.membertree[1]
-                        temps << "Runtime depends on command line argument, #" << i << " (main - argv[" << i << "])";
+                        temps << "Runtime depends on command line argument, #" << i+1 << " (main - argv[" << i << "])";
                     }
                     userInputDep.insert(temp);
                 }
@@ -1545,13 +1611,13 @@ struct CriticalInputPass : public PassInfoMixin<CriticalInputPass> {
             debug("record names : " << str << '\n')
         }
         for (std::string const &str : unmarkInst) {
-            debug("unmark inst : " << str << '\n')
+            debug2("unmark inst : " << str << '\n')
         }
         for (std::string const &str : inputDeps) {
-            debug("Function depends on input : " << str << '\n')
+            debug2("Function depends on input : " << str << '\n')
         }
         for (std::string const &str : outputDeps) {
-            debug("Function depends on (output) : " << str << '\n')
+            debug2("Function depends on (output) : " << str << '\n')
         }
         for (std::string const &str : userInputDep) {
             errs() << "user input dep : " << str << '\n';
