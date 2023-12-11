@@ -44,3 +44,4 @@ clean:
 	rm -f $(TEST_OUTPUT_DIR)/*.ll
 	rm -f $(TEST_OUTPUT_DIR)/*
 	rm -rf $(PROFILING_DIR)
+	rm -f branch_dictionary.txt

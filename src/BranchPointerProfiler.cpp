@@ -33,15 +33,33 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Passes/PassPlugin.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/ADT/DenseMap.h"
 
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
 
+#include <fstream>
+
 using namespace llvm;
+
+// Struct to store branch information
+struct BranchInfo {
+    StringRef fileName;
+    unsigned lineNum;
+    unsigned targetLineNum;
+};
 
 namespace { // anonymous namespace for same-file linkage
 // Define the BranchPointerProfiler pass
 struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
+    unsigned findLineNumForBlock(BasicBlock *BB) {
+      for (auto &I : *BB) {
+        if (DebugLoc DL = I.getDebugLoc()) {
+          return DL.getLine();
+        }
+      }
+      return 0; // Line number not found
+    }
 
     // Main function to run the pass 
     PreservedAnalyses run(Module &M, ModuleAnalysisManager &AM) {
@@ -89,9 +107,19 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
         // Generate a constant expression for getting the address of the function pointer format string
         Constant *funcPtrGEPExpr = ConstantExpr::getInBoundsGetElementPtr(funcPtrFString->getType(), funcPtrGlobalString, ArrayRef<Constant *>({constIntZero, constIntZero}));
         
+        // Create a DenseMap to store branch information
+        DenseMap<int, BranchInfo> branchInfoMap;
+        
         // Assign unique ID to each branch and function pointers
         static int branchCounter = 0;
         static int funcPtrCounter = 0; 
+        
+        // Create a dictionary file
+        std::ofstream dictionaryFile("branch_dictionary.txt");
+        if (!dictionaryFile.is_open()) {
+            errs() << "Unable to open dictionary file for writing.\n";
+            return PreservedAnalyses::none();
+        }        
 
         // Iterate over all functions, basic blocks, and instructions in the module
         for (auto &F : M) {
@@ -110,13 +138,31 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                   //static GetElementPtrConstantExpr * 	Create (Type *SrcElementTy, Constant *C, ArrayRef< Constant * > IdxList, Type *DestTy, unsigned Flags)
                   Value *branchIDValue = ConstantInt::get(Type::getInt32Ty(F.getContext()), currentBranchID);
                   builder.CreateCall(printfFunc, {branchGEPExpr, branchIDValue});
-                        
+                  
+                  // Get the target basic block of the branch
+                  BasicBlock *trueBB = branchInst->getSuccessor(0); // True branch
+                  BasicBlock *falseBB = branchInst->getSuccessor(1); // False branch
+
+                  // Calculate the target line numbers
+                  unsigned trueTargetLine = findLineNumForBlock(trueBB);
+                  unsigned falseTargetLine = findLineNumForBlock(falseBB);
+
                   // Store metadata for later use
                   if (DebugLoc DL = branchInst->getDebugLoc()) {
-                    unsigned line = DL.getLine();
-                    StringRef file = DL->getFilename();
-                    // Store 'file' and 'line' for later use
-                  }             
+                    unsigned line = DL->getLine();
+                    std::string file = DL->getFilename().str();
+
+                    // Log the file and line information
+                    BranchInfo branchInfo;
+                    branchInfo.fileName = file;
+                    branchInfo.lineNum = line;
+                    branchInfo.targetLineNum = trueTargetLine;
+
+                    branchInfoMap[currentBranchID] = branchInfo;
+
+                    // Write branch information to the dictionary file
+                    dictionaryFile << "br_" << currentBranchID << ": " << file << ", " << line << ", " << trueTargetLine << "\n";
+                  }            
                 }
               } 
               
@@ -144,7 +190,7 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
                   
                   // Store metadata for later use
                   if (DebugLoc DL = ci->getDebugLoc()) {
-                    unsigned line = DL.getLine();
+                    unsigned line = DL->getLine();
                     StringRef file = DL->getFilename();
 
                     // Log the file and line information                    
@@ -154,12 +200,13 @@ struct BranchPointerProfiler : public PassInfoMixin<BranchPointerProfiler> {
             }
           }
         }
+         dictionaryFile.close(); // Close the dictionary file
         
         return PreservedAnalyses::none(); // Indicate that the function was modified 
     };
 };
 
-}
+} //namespace
 
 // Plugin entry point 
 extern "C" LLVM_ATTRIBUTE_WEAK::llvm::PassPluginLibraryInfo
